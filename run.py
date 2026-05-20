@@ -564,6 +564,13 @@ def cmd_reorder(args):
     }, ensure_ascii=False))
 
 
+def cmd_serve(args):
+    """Start local API server for the Canvas Viewer."""
+    ensure_dirs()
+    from serve.board_api import start_server
+    start_server(port=args.port)
+
+
 def cmd_pipeline(args):
     ensure_dirs()
     sid = new_session()
@@ -758,6 +765,10 @@ def main():
     p.add_argument("--section", required=True, help="Section ID (e.g. architecture)")
     p.add_argument("--order", required=True, nargs="+", help="Image IDs in desired order")
 
+    # serve
+    p = sub.add_parser("serve")
+    p.add_argument("--port", type=int, default=8765, help="Port number (default: 8765)")
+
     # pipeline
     p = sub.add_parser("pipeline")
     p.add_argument("keywords")
@@ -792,6 +803,7 @@ def main():
         "rank": cmd_rank,
         "compose": cmd_compose,
         "reorder": cmd_reorder,
+        "serve": cmd_serve,
         "pipeline": cmd_pipeline,
     }
     commands[args.command](args)
