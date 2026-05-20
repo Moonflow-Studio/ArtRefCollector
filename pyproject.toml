@@ -1,7 +1,7 @@
 [project]
 name = "art-ref-collector"
-version = "0.1.0"
-description = "Art reference image collector with Pinterest-style gallery display"
+version = "0.2.0"
+description = "Art reference image collector with metric analysis and infinite canvas gallery"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,8 @@ dependencies = [
     "httpx>=0.28.0",
     "pillow>=11.0.0",
     "imagehash>=4.3.2",
+    "numpy>=2.0.0",
+    "scipy>=1.14.0",
     "torch>=2.0.0",
     "transformers>=4.40.0",
     "open-clip-torch>=2.24.0",
