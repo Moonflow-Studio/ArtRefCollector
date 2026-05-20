@@ -53,7 +53,7 @@ def _json_loads_dict(val: str | None) -> dict:
 
 
 class ImageDatabase:
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path or str(DB_PATH)
@@ -144,6 +144,7 @@ class ImageDatabase:
                 supporting_images TEXT DEFAULT '[]',
                 anti_references TEXT DEFAULT '[]',
                 missing_needs TEXT DEFAULT '[]',
+                user_order TEXT DEFAULT '[]',
                 UNIQUE(board_id, section_id)
             );
 
@@ -506,8 +507,8 @@ class ImageDatabase:
         self._conn.execute("""
             INSERT OR REPLACE INTO board_sections
                 (board_id, section_id, section_name, summary, design_takeaways,
-                 key_images, supporting_images, anti_references, missing_needs)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 key_images, supporting_images, anti_references, missing_needs, user_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             board_id, section.section_id, section.section_name, section.summary,
             _json_dumps(section.design_takeaways),
@@ -515,6 +516,7 @@ class ImageDatabase:
             _json_dumps([r.model_dump() for r in section.supporting_images]),
             _json_dumps([r.model_dump() for r in section.anti_references]),
             _json_dumps(section.missing_needs),
+            _json_dumps(section.user_order),
         ))
         self._conn.commit()
 
@@ -532,6 +534,7 @@ class ImageDatabase:
                 supporting_images=[KeyImageRef(**d) for d in _json_loads_list(r["supporting_images"])],
                 anti_references=[KeyImageRef(**d) for d in _json_loads_list(r["anti_references"])],
                 missing_needs=_json_loads_list(r["missing_needs"]),
+            user_order=_json_loads_list(r["user_order"]),
             )
             for r in rows
         ]

@@ -8,6 +8,7 @@ from models.schemas import (
     VisualMetrics,
     CurationScores,
     BoardSection,
+    KeyImageRef,
     SettingParseResult,
     IMAGE_STATUSES,
     SOURCE_TYPES,

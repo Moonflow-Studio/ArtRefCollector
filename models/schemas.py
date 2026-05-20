@@ -199,6 +199,7 @@ class BoardSection(BaseModel):
     supporting_images: list[KeyImageRef] = []
     anti_references: list[KeyImageRef] = []
     missing_needs: list[str] = []
+    user_order: list[str] = []  # User-defined image_id ordering, overrides score-based order
 
 
 # ---------------------------------------------------------------------------

@@ -515,6 +515,55 @@ def cmd_rank(args):
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def cmd_compose(args):
+    """Compose a structured reference board from analyzed images."""
+    from analyze.board_composer import compose_board
+
+    result = compose_board(
+        board_id=args.board,
+        api_base=args.api_base,
+        model=args.model if args.model else "",
+        api_key=args.api_key,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def cmd_reorder(args):
+    """Set user-defined image ordering for a board section."""
+    from store.database import ImageDatabase
+
+    db = ImageDatabase()
+    sections = db.get_sections(args.board)
+    order = args.order
+
+    updated = False
+    for section in sections:
+        if section.section_id == args.section:
+            section.user_order = order
+            db.save_section(args.board, section)
+            updated = True
+            break
+
+    if not updated:
+        print(json.dumps({"error": f"Section '{args.section}' not found in board '{args.board}'"}))
+        db.close()
+        sys.exit(1)
+
+    # Update _board.json
+    board = db.get_board(args.board)
+    if board and board.base_dir:
+        board_json = db.export_board_json(args.board)
+        if board_json:
+            Path(board.base_dir).joinpath("_board.json").write_text(board_json, encoding="utf-8")
+
+    db.close()
+    print(json.dumps({
+        "board_id": args.board,
+        "section": args.section,
+        "user_order": order,
+    }, ensure_ascii=False))
+
+
 def cmd_pipeline(args):
     ensure_dirs()
     sid = new_session()
@@ -696,6 +745,19 @@ def main():
     p.add_argument("--threshold", type=float, default=0.92)
     p.add_argument("--clip", action="store_true", help="Enable CLIP semantic dedup")
 
+    # compose
+    p = sub.add_parser("compose")
+    p.add_argument("--board", required=True, help="Board ID")
+    p.add_argument("--api-base", default="http://localhost:23333")
+    p.add_argument("--api-key", default="")
+    p.add_argument("--model", default="", help="VLM model for section summaries (skip if empty)")
+
+    # reorder
+    p = sub.add_parser("reorder")
+    p.add_argument("--board", required=True, help="Board ID")
+    p.add_argument("--section", required=True, help="Section ID (e.g. architecture)")
+    p.add_argument("--order", required=True, nargs="+", help="Image IDs in desired order")
+
     # pipeline
     p = sub.add_parser("pipeline")
     p.add_argument("keywords")
@@ -728,6 +790,8 @@ def main():
         "plan": cmd_plan,
         "analyze-board": cmd_analyze_board,
         "rank": cmd_rank,
+        "compose": cmd_compose,
+        "reorder": cmd_reorder,
         "pipeline": cmd_pipeline,
     }
     commands[args.command](args)
