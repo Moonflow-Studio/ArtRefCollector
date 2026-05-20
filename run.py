@@ -9,7 +9,8 @@ from config import DATA_DIR, SESSIONS_DIR
 
 def ensure_dirs():
     for d in [DATA_DIR / "images", DATA_DIR / "thumbnails", SESSIONS_DIR,
-              DATA_DIR / "faiss_index", DATA_DIR / "galleries", DATA_DIR / "metrics"]:
+              DATA_DIR / "faiss_index", DATA_DIR / "lancedb",
+              DATA_DIR / "galleries", DATA_DIR / "metrics"]:
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -37,11 +38,24 @@ def save_session_data(sid: str, filename: str, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
+def _ask_vector_backend(args):
+    """Determine vector backend, prompting user if needed."""
+    backend = getattr(args, "vector_backend", None)
+    if backend:
+        return backend
+    try:
+        choice = input("向量存储后端 [faiss/lancedb] (默认 faiss): ").strip().lower()
+        return choice if choice in ("faiss", "lancedb") else "faiss"
+    except (EOFError, KeyboardInterrupt):
+        return "faiss"
+
+
 def cmd_search(args):
-    from search.duckduckgo_searcher import search_images
+    from search.search_factory import get_searcher
     ensure_dirs()
     sid = new_session()
-    results = search_images(
+    searcher = get_searcher(args.search_backend)
+    results = searcher(
         keywords=args.keywords,
         max_results=args.max,
         region=args.region,
@@ -55,13 +69,14 @@ def cmd_search(args):
 
 
 def cmd_download(args):
-    from download.downloader import download_images
+    from download.download_factory import get_downloader
     ensure_dirs()
     session = load_session(args.session)
     output_dir = DATA_DIR / "images" / args.session
     output_dir.mkdir(parents=True, exist_ok=True)
     import asyncio
-    downloaded = asyncio.run(download_images(
+    downloader = get_downloader(args.download_backend)
+    downloaded = asyncio.run(downloader(
         url_list=session["search_results"],
         output_dir=str(output_dir),
         max_concurrent=args.concurrent,
@@ -216,31 +231,47 @@ def cmd_store(args):
 
     from store.database import ImageDatabase
     from store.file_manager import organize_files
-    from store.vector_index import VectorIndex
+    from store.vector_store_factory import get_vector_store
 
     db = ImageDatabase()
     collection_id = db.create_collection(args.topic)
     organized = organize_files(downloads, args.topic)
 
+    # Determine vector backend
+    backend = _ask_vector_backend(args)
+
     embeddings = []
     img_ids = []
     for item in organized:
         img_id = db.add_image(collection_id, item)
+
+        # Compute missing embeddings
+        if not item.get("clip_embedding"):
+            path = item.get("local_path", "")
+            if path and Path(path).exists():
+                from store.embedding_utils import encode_image
+                emb = encode_image(path)
+                if emb is not None:
+                    item["clip_embedding"] = emb.tolist()
+
         if item.get("clip_embedding"):
             embeddings.append(item["clip_embedding"])
             img_ids.append(img_id)
 
     if embeddings:
         import numpy as np
-        vi = VectorIndex()
+        vi = get_vector_store(backend)
         for iid, emb in zip(img_ids, embeddings):
-            vi.add(iid, np.array(emb, dtype="float32"))
+            meta = {"collection_id": collection_id, "tags": item.get("tags", "")}
+            if hasattr(vi, 'add'):
+                vi.add(iid, np.array(emb, dtype="float32"), metadata=meta)
         vi.save()
 
     print(json.dumps({
         "session_id": args.session,
         "collection": args.topic,
         "stored": len(organized),
+        "vector_backend": backend,
     }, ensure_ascii=False))
 
 
@@ -318,26 +349,27 @@ def cmd_pipeline(args):
     sid = new_session()
     print(json.dumps({"status": "searching", "session_id": sid}), file=sys.stderr)
 
-    from search.duckduckgo_searcher import search_images
-    from download.downloader import download_images
+    from search.search_factory import get_searcher
+    from download.download_factory import get_downloader
     from dedup.phash_dedup import find_duplicates_phash
     from dedup.clip_dedup import find_duplicates_clip
-    from analyze.vision_tagger import tag_images
     from store.database import ImageDatabase
     from store.file_manager import organize_files
-    from store.vector_index import VectorIndex
+    from store.vector_store_factory import get_vector_store
     from display.gallery_generator import generate_gallery
     import asyncio
 
     # Search
-    results = search_images(args.keywords, max_results=args.max, region=args.region)
+    searcher = get_searcher(args.search_backend)
+    results = searcher(args.keywords, max_results=args.max, region=args.region)
     save_session_data(sid, "search_results.json", results)
     print(json.dumps({"status": "searched", "count": len(results)}), file=sys.stderr)
 
     # Download
     output_dir = DATA_DIR / "images" / sid
     output_dir.mkdir(parents=True, exist_ok=True)
-    downloads = asyncio.run(download_images(url_list=results, output_dir=str(output_dir)))
+    downloader = get_downloader(args.download_backend)
+    downloads = asyncio.run(downloader(url_list=results, output_dir=str(output_dir)))
     save_session_data(sid, "downloads.json", downloads)
     print(json.dumps({"status": "downloaded", "count": len(downloads)}), file=sys.stderr)
 
@@ -354,16 +386,41 @@ def cmd_pipeline(args):
 
     # Analyze
     if args.model:
+        from analyze.vision_tagger import tag_images
         downloads = tag_images(downloads, api_base=args.api_base, model=args.model)
         save_session_data(sid, "downloads.json", downloads)
         print(json.dumps({"status": "analyzed", "count": len(downloads)}), file=sys.stderr)
 
     # Store
+    backend = _ask_vector_backend(args)
     db = ImageDatabase()
     collection_id = db.create_collection(args.topic)
     organized = organize_files(downloads, args.topic)
+
+    embeddings = []
+    img_ids = []
     for item in organized:
-        db.add_image(collection_id, item)
+        img_id = db.add_image(collection_id, item)
+
+        # Compute missing embeddings
+        if not item.get("clip_embedding"):
+            path = item.get("local_path", "")
+            if path and Path(path).exists():
+                from store.embedding_utils import encode_image
+                emb = encode_image(path)
+                if emb is not None:
+                    item["clip_embedding"] = emb.tolist()
+
+        if item.get("clip_embedding"):
+            embeddings.append(item["clip_embedding"])
+            img_ids.append(img_id)
+
+    if embeddings:
+        import numpy as np
+        vi = get_vector_store(backend)
+        for iid, emb in zip(img_ids, embeddings):
+            vi.add(iid, np.array(emb, dtype="float32"))
+        vi.save()
 
     # Gallery
     images = db.get_images_by_collection(args.topic)
@@ -376,6 +433,7 @@ def cmd_pipeline(args):
         "downloaded": len([d for d in downloads if d.get("status") == "success"]),
         "after_dedup": len(downloads),
         "stored": len(organized),
+        "vector_backend": backend,
         "gallery_path": str(output_path),
     }, ensure_ascii=False))
 
@@ -393,11 +451,13 @@ def main():
     p.add_argument("--size", default=None, choices=["Small", "Medium", "Large", "Wallpaper"])
     p.add_argument("--type", default=None, choices=["photo", "clipart", "transparent", "line"])
     p.add_argument("--layout", default=None, choices=["Square", "Tall", "Wide"])
+    p.add_argument("--search-backend", default=None, choices=["auto", "searxng", "duckduckgo"])
 
     # download
     p = sub.add_parser("download")
     p.add_argument("--session", required=True)
     p.add_argument("--concurrent", type=int, default=5)
+    p.add_argument("--download-backend", default=None, choices=["auto", "gallery-dl", "httpx"])
 
     # dedup
     p = sub.add_parser("dedup")
@@ -409,9 +469,9 @@ def main():
     # analyze
     p = sub.add_parser("analyze")
     p.add_argument("--session", required=True)
-    p.add_argument("--api-base", default="http://localhost:23456")
+    p.add_argument("--api-base", default="http://localhost:23333")
     p.add_argument("--api-key", default="")
-    p.add_argument("--model", default="openai:gpt-4o")
+    p.add_argument("--model", default="zhipu:glm-4.6v")
 
     # metrics
     p = sub.add_parser("metrics")
@@ -426,6 +486,7 @@ def main():
     p = sub.add_parser("store")
     p.add_argument("--session", required=True)
     p.add_argument("--topic", required=True)
+    p.add_argument("--vector-backend", default=None, choices=["faiss", "lancedb"])
 
     # gallery
     p = sub.add_parser("gallery")
@@ -438,12 +499,15 @@ def main():
     p.add_argument("keywords")
     p.add_argument("--max", type=int, default=30)
     p.add_argument("--topic", required=True)
-    p.add_argument("--model", default="openai:gpt-4o")
-    p.add_argument("--api-base", default="http://localhost:23456")
+    p.add_argument("--model", default="zhipu:glm-4.6v")
+    p.add_argument("--api-base", default="http://localhost:23333")
     p.add_argument("--region", default="wt-wt")
     p.add_argument("--phash-threshold", type=int, default=10)
     p.add_argument("--threshold", type=float, default=0.92)
     p.add_argument("--clip", action="store_true")
+    p.add_argument("--search-backend", default=None, choices=["auto", "searxng", "duckduckgo"])
+    p.add_argument("--download-backend", default=None, choices=["auto", "gallery-dl", "httpx"])
+    p.add_argument("--vector-backend", default=None, choices=["faiss", "lancedb"])
 
     args = parser.parse_args()
     if not args.command:

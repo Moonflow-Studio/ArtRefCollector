@@ -1,35 +1,9 @@
 from pathlib import Path
 
 import numpy as np
-import torch
-from PIL import Image
 from tqdm import tqdm
 
-
-_model = None
-_preprocess = None
-
-
-def _load_model():
-    global _model, _preprocess
-    if _model is not None:
-        return
-    import open_clip
-    _model, _, _preprocess = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
-    _model.eval()
-
-
-def compute_clip_embedding(image_path: str) -> np.ndarray | None:
-    _load_model()
-    try:
-        img = Image.open(image_path).convert("RGB")
-        image_tensor = _preprocess(img).unsqueeze(0)
-        with torch.no_grad():
-            features = _model.encode_image(image_tensor)
-            features = features / features.norm(dim=-1, keepdim=True)
-        return features.squeeze().numpy().astype("float32")
-    except Exception:
-        return None
+from store.embedding_utils import encode_image
 
 
 def find_duplicates_clip(
@@ -41,10 +15,12 @@ def find_duplicates_clip(
         path = rec.get("local_path", "")
         if not path or not Path(path).exists():
             continue
-        emb = compute_clip_embedding(path)
+        emb = encode_image(path)
         if emb is not None:
             identifier = rec.get("filename", path)
             embeddings.append((identifier, emb))
+            # Persist embedding back into record for downstream vector index
+            rec["clip_embedding"] = emb.tolist()
 
     if len(embeddings) < 2:
         return []

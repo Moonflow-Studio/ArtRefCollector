@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
@@ -6,6 +7,7 @@ IMAGES_DIR = DATA_DIR / "images"
 THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 SESSIONS_DIR = DATA_DIR / "sessions"
 FAISS_DIR = DATA_DIR / "faiss_index"
+LANCEDB_DIR = DATA_DIR / "lancedb"
 GALLERIES_DIR = DATA_DIR / "galleries"
 DB_PATH = DATA_DIR / "art_ref.db"
 
@@ -17,6 +19,17 @@ DEFAULT_PHASH_HAMMING = 10
 DEFAULT_CONCURRENT_DOWNLOADS = 5
 DEFAULT_MIN_FILE_SIZE = 10240
 DEFAULT_THUMBNAIL_SIZE = (300, 300)
+
+# Search backend
+SEARXNG_BASE_URL = os.environ.get("ARTREF_SEARXNG_URL", "")   # e.g. "http://localhost:8080"
+DEFAULT_SEARCH_BACKEND = os.environ.get("ARTREF_SEARCH_BACKEND", "auto")  # auto | searxng | duckduckgo
+
+# Download backend
+DEFAULT_DOWNLOAD_BACKEND = os.environ.get("ARTREF_DOWNLOAD_BACKEND", "auto")  # auto | gallery-dl | httpx
+IMG2DATASET_FALLBACK = True
+
+# Vector store backend
+DEFAULT_VECTOR_BACKEND = os.environ.get("ARTREF_VECTOR_BACKEND", "faiss")  # faiss | lancedb
 
 VISION_PROMPT = """Analyze this image as an art reference. Return a JSON object with these fields:
 - "description": A detailed description of the image content (1-2 sentences)

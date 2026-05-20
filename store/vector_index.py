@@ -38,19 +38,8 @@ class VectorIndex:
         return results
 
     def search_by_text(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
-        import open_clip
-        import torch
-
-        model, _, preprocess = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
-        tokenizer = open_clip.get_tokenizer("ViT-B-32")
-        model.eval()
-
-        text_tokens = tokenizer([query])
-        with torch.no_grad():
-            text_features = model.encode_text(text_tokens)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        query_embedding = text_features.squeeze().numpy().astype("float32")
-
+        from store.embedding_utils import encode_text
+        query_embedding = encode_text(query)
         return self.search(query_embedding, top_k)
 
     def save(self, path: str | None = None):
