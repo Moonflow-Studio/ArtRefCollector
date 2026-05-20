@@ -215,10 +215,19 @@ class ImageDatabase:
 
     def save_board(self, board: Board) -> None:
         self._conn.execute("""
-            INSERT OR REPLACE INTO boards
+            INSERT INTO boards
                 (id, name, base_dir, setting_text, visual_goal_summary, style_profile,
                  global_missing_needs, next_search_suggestions, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                base_dir = excluded.base_dir,
+                setting_text = excluded.setting_text,
+                visual_goal_summary = excluded.visual_goal_summary,
+                style_profile = excluded.style_profile,
+                global_missing_needs = excluded.global_missing_needs,
+                next_search_suggestions = excluded.next_search_suggestions,
+                updated_at = excluded.updated_at
         """, (
             board.id,
             board.name,
@@ -317,10 +326,20 @@ class ImageDatabase:
 
     def save_track(self, track: ReferenceTrack, board_id: str) -> None:
         self._conn.execute("""
-            INSERT OR REPLACE INTO reference_tracks
+            INSERT INTO reference_tracks
                 (id, board_id, name, description, source_type, target_categories,
                  search_queries, negative_queries, expected_visual_features, relation_to_setting)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                board_id = excluded.board_id,
+                name = excluded.name,
+                description = excluded.description,
+                source_type = excluded.source_type,
+                target_categories = excluded.target_categories,
+                search_queries = excluded.search_queries,
+                negative_queries = excluded.negative_queries,
+                expected_visual_features = excluded.expected_visual_features,
+                relation_to_setting = excluded.relation_to_setting
         """, (
             track.id,
             board_id,
@@ -505,10 +524,19 @@ class ImageDatabase:
 
     def save_section(self, board_id: str, section: BoardSection) -> None:
         self._conn.execute("""
-            INSERT OR REPLACE INTO board_sections
+            INSERT INTO board_sections
                 (board_id, section_id, section_name, summary, design_takeaways,
                  key_images, supporting_images, anti_references, missing_needs, user_order)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(board_id, section_id) DO UPDATE SET
+                section_name = excluded.section_name,
+                summary = excluded.summary,
+                design_takeaways = excluded.design_takeaways,
+                key_images = excluded.key_images,
+                supporting_images = excluded.supporting_images,
+                anti_references = excluded.anti_references,
+                missing_needs = excluded.missing_needs,
+                user_order = excluded.user_order
         """, (
             board_id, section.section_id, section.section_name, section.summary,
             _json_dumps(section.design_takeaways),

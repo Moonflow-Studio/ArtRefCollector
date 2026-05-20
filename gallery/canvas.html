@@ -9,6 +9,7 @@
 :root {
   --bg: #0c0c0c; --surface: #161616; --border: #2a2a2a;
   --text: #e0e0e0; --text-dim: #888; --accent: #e94560; --accent-glow: rgba(233,69,96,0.15);
+  --success: #3cb878; --warn: #d4a03c;
 }
 html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
 
@@ -57,6 +58,52 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 .img-card:hover .overlay { opacity: 1; }
 .img-card .overlay .tag { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 6px; background: rgba(233,69,96,0.25); color: #f0a0b0; margin: 1px 2px; }
 
+/* ── Board Section ── */
+.board-container { position: absolute; }
+.board-header {
+  padding: 20px 24px; background: linear-gradient(135deg, rgba(22,22,22,0.95), rgba(40,20,30,0.9));
+  border-radius: 16px; border: 1px solid var(--border); margin-bottom: 16px;
+}
+.board-header h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+.board-header .goal { font-size: 13px; color: var(--text-dim); line-height: 1.5; max-width: 800px; }
+.board-core { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+.board-core-label { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
+.section-block {
+  background: rgba(22,22,22,0.6); border-radius: 12px; border: 1px solid var(--border);
+  padding: 16px; margin-bottom: 16px; min-width: 400px;
+}
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.section-header h3 { font-size: 15px; font-weight: 600; }
+.section-header .section-count { font-size: 11px; color: var(--text-dim); }
+.section-summary { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin-bottom: 10px; }
+.section-grid {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.section-grid .img-card {
+  width: 140px; flex-shrink: 0; cursor: grab;
+}
+.section-grid .img-card.dragging { opacity: 0.4; }
+.section-grid .img-card.drag-over {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.section-grid .img-card img { height: 100px; }
+.section-actions {
+  display: flex; gap: 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #1a1a1a;
+}
+.section-actions button {
+  background: none; border: 1px solid var(--border); color: var(--text);
+  padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px;
+}
+.section-actions button:hover { background: var(--border); }
+.section-actions .btn-apply { border-color: var(--success); color: var(--success); }
+.section-actions .btn-apply:hover { background: rgba(60,184,120,0.15); }
+.section-actions .btn-reset { border-color: var(--warn); color: var(--warn); }
+.section-actions .btn-reset:hover { background: rgba(212,160,60,0.15); }
+.section-missing { font-size: 11px; color: #664; margin-top: 8px; font-style: italic; }
+
 /* ── Detail ── */
 #detail { display: none; position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,0.94); justify-content: center; align-items: center; }
 #detail.active { display: flex; }
@@ -86,12 +133,19 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 #nav h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
 #nav h3 .col-count { font-size: 11px; color: var(--text-dim); font-weight: 400; }
 #importBtn {
-  display: block; width: 100%; padding: 8px; margin-bottom: 10px;
+  display: block; width: 100%; padding: 8px; margin-bottom: 6px;
   background: var(--accent); color: #fff; border: none; border-radius: 8px;
   cursor: pointer; font-size: 13px; font-weight: 500; text-align: center;
   transition: background 0.2s;
 }
 #importBtn:hover { background: #d13a54; }
+#loadBoardBtn {
+  display: block; width: 100%; padding: 8px; margin-bottom: 10px;
+  background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 8px;
+  cursor: pointer; font-size: 13px; font-weight: 500; text-align: center;
+  transition: background 0.2s;
+}
+#loadBoardBtn:hover { background: rgba(233,69,96,0.1); }
 #nav .nav-item {
   padding: 6px 10px; border-radius: 8px; cursor: pointer;
   display: flex; align-items: center; gap: 8px; transition: background 0.15s;
@@ -108,6 +162,9 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 }
 #nav .nav-remove:hover { color: var(--accent); }
 #importFile { display: none; }
+#importBoardFile { display: none; }
+#apiStatus { font-size: 10px; color: #555; margin-bottom: 6px; }
+#apiStatus.connected { color: var(--success); }
 
 /* ── Axes panel ── */
 #axesPanel {
@@ -129,6 +186,29 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 }
 .axis-select-group select:focus { border-color: var(--accent); }
 .axis-info { font-size: 11px; color: #555; margin-top: 4px; line-height: 1.4; }
+
+/* ── Board selector modal ── */
+#boardModal {
+  display: none; position: fixed; inset: 0; z-index: 4000;
+  background: rgba(0,0,0,0.85); justify-content: center; align-items: center;
+}
+#boardModal.active { display: flex; }
+#boardModal .modal-box {
+  background: var(--surface); border-radius: 12px; border: 1px solid var(--border);
+  padding: 24px; width: 400px; max-height: 80vh; overflow-y: auto;
+}
+#boardModal h3 { font-size: 16px; margin-bottom: 16px; }
+#boardModal .board-option {
+  padding: 10px 14px; border-radius: 8px; cursor: pointer; margin-bottom: 6px;
+  border: 1px solid var(--border); transition: background 0.15s;
+}
+#boardModal .board-option:hover { background: var(--border); }
+#boardModal .board-option .board-name { font-weight: 600; }
+#boardModal .board-option .board-info { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+#boardModal .modal-close {
+  background: none; border: none; color: #555; cursor: pointer; font-size: 13px; margin-top: 12px;
+}
+#boardModal .modal-close:hover { color: var(--text); }
 
 /* ── Toolbar ── */
 #toolbar {
@@ -155,7 +235,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 
 <div id="viewport">
   <div id="world"></div>
-  <div id="emptyState"><h2>No collections loaded</h2><p>Use the Import button to load a collection folder</p></div>
+  <div id="emptyState"><h2>No collections loaded</h2><p>Use the Import button or load a Board</p></div>
 </div>
 
 <div id="detail">
@@ -172,8 +252,19 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 <div id="nav">
   <h3>Collections <span class="col-count" id="colCount">0</span></h3>
   <button id="importBtn">+ Import Folder</button>
+  <button id="loadBoardBtn">Load Board</button>
   <input type="file" id="importFile" webkitdirectory>
+  <input type="file" id="importBoardFile" accept=".json">
+  <div id="apiStatus">API: checking...</div>
   <div id="navList"></div>
+</div>
+
+<div id="boardModal">
+  <div class="modal-box">
+    <h3>Select Board</h3>
+    <div id="boardList"></div>
+    <button class="modal-close" id="boardModalClose">Cancel</button>
+  </div>
 </div>
 
 <div id="axesPanel">
@@ -188,6 +279,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   <div class="sep"></div>
   <button id="btnGrid" class="active">Grid</button>
   <button id="btnScatter">Scatter</button>
+  <button id="btnBoard">Board</button>
   <div class="sep"></div>
   <button id="btnFit">Fit</button>
   <div class="sep"></div>
@@ -200,6 +292,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 <script>
 const COLLECTION_CONFIG = '_collection.json';
 const COL_SPACING = 200;
+const API_BASE = 'http://localhost:8765';
 
 const METRIC_DEFS = {
   brightness:        { label: 'Brightness',    axis: '暗 ↔ 亮',       group: 'pixel' },
@@ -230,14 +323,17 @@ const METRIC_DEFS = {
 };
 
 // ── State ──
-let collections = [];       // { id, name, color, layout, images[], position, resolver }
-let allImages = [];          // { img, col }
+let collections = [];
+let allImages = [];
 let view = { x: 0, y: 0, zoom: 1 };
 let isPanning = false, panStart = {}, viewStart = {};
 let minimapVisible = false, axesVisible = false;
 let layoutMode = 'grid';
 let selectedX = 'brightness', selectedY = 'saturation';
 let scatterTitleX = null, scatterTitleY = null;
+let apiAvailable = false;
+let currentBoard = null;  // Loaded board data for Board mode
+let pendingOrders = {};   // section_id -> [img_ids] for unsaved reorder
 
 const viewport = document.getElementById('viewport');
 const world = document.getElementById('world');
@@ -248,20 +344,30 @@ const minimapCtx = minimapCanvas.getContext('2d');
 const axesPanel = document.getElementById('axesPanel');
 const emptyState = document.getElementById('emptyState');
 
-// ── Import ──
+// ── API Detection ──
+async function checkApi() {
+  const el = document.getElementById('apiStatus');
+  try {
+    const r = await fetch(API_BASE + '/api/health', { signal: AbortSignal.timeout(2000) });
+    if (r.ok) { apiAvailable = true; el.textContent = 'API: connected'; el.className = 'connected'; return; }
+  } catch(e) {}
+  apiAvailable = false;
+  el.textContent = 'API: offline (use file import)';
+  el.className = '';
+}
+checkApi();
+
+// ── Import Collection ──
 document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
 document.getElementById('importFile').addEventListener('change', e => {
   const files = Array.from(e.target.files);
   importFolder(files);
-  e.target.value = ''; // allow re-import same folder
+  e.target.value = '';
 });
 
 function importFolder(files) {
-  // Find the config file
   const configFile = files.find(f => f.name === COLLECTION_CONFIG || f.webkitRelativePath?.endsWith('/' + COLLECTION_CONFIG));
   if (!configFile) { alert('No ' + COLLECTION_CONFIG + ' found in selected folder'); return; }
-
-  // Build filename → objectURL map for all images
   const dir = configFile.webkitRelativePath.replace('/' + COLLECTION_CONFIG, '');
   const fileMap = {};
   files.forEach(f => {
@@ -270,12 +376,10 @@ function importFolder(files) {
       fileMap[f.name] = URL.createObjectURL(f);
     }
   });
-
   const reader = new FileReader();
   reader.onload = e => {
     try {
       const colConfig = JSON.parse(e.target.result);
-      // Resolver: map bare filename to objectURL
       colConfig.resolver = (path) => fileMap[path] || '';
       addCollection(colConfig);
     } catch (err) { alert('Invalid JSON: ' + err.message); }
@@ -294,7 +398,6 @@ function addCollection(col) {
 function removeCollection(id) {
   const idx = collections.findIndex(c => c.id === id);
   if (idx === -1) return;
-  // Revoke object URLs
   const col = collections[idx];
   if (col.resolver) {
     col.images.forEach(img => { const url = col.resolver(img.path); if (url.startsWith('blob:')) URL.revokeObjectURL(url); });
@@ -320,16 +423,99 @@ function rebuildAll(skipFit) {
   collections.forEach(col => {
     (col.images || []).forEach(img => allImages.push({ img, col }));
   });
-  emptyState.classList.toggle('hidden', collections.length > 0);
+  emptyState.classList.toggle('hidden', collections.length > 0 || currentBoard);
   buildNav();
   buildAxesPanel();
   render(skipFit);
+}
+
+// ── Board Loading ──
+document.getElementById('loadBoardBtn').addEventListener('click', async () => {
+  if (apiAvailable) {
+    try {
+      const r = await fetch(API_BASE + '/api/boards');
+      const boards = await r.json();
+      if (!boards.length) { alert('No boards found. Run parse/plan/pipeline first.'); return; }
+      showBoardModal(boards);
+    } catch(e) { alert('Failed to fetch boards: ' + e); }
+  } else {
+    document.getElementById('importBoardFile').click();
+  }
+});
+
+document.getElementById('importBoardFile').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      loadBoardData(data, null);
+    } catch(err) { alert('Invalid board JSON: ' + err.message); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+function showBoardModal(boards) {
+  const modal = document.getElementById('boardModal');
+  const list = document.getElementById('boardList');
+  list.innerHTML = '';
+  boards.forEach(b => {
+    const opt = document.createElement('div');
+    opt.className = 'board-option';
+    opt.innerHTML = `<div class="board-name">${b.name || b.id}</div><div class="board-info">${b.image_count || 0} images, ${b.track_count || 0} tracks</div>`;
+    opt.addEventListener('click', async () => {
+      modal.classList.remove('active');
+      try {
+        const r = await fetch(API_BASE + '/api/boards/' + encodeURIComponent(b.id));
+        const data = await r.json();
+        loadBoardData(data, b.id);
+      } catch(e) { alert('Failed to load board: ' + e); }
+    });
+    list.appendChild(opt);
+  });
+  modal.classList.add('active');
+}
+
+document.getElementById('boardModalClose').addEventListener('click', () => {
+  document.getElementById('boardModal').classList.remove('active');
+});
+
+function loadBoardData(data, boardId) {
+  // Build image resolver — use API URLs if available, else local paths
+  const resolver = (img) => {
+    if (img.api_url) return API_BASE + img.api_url;
+    if (img.api_thumb_url) return API_BASE + img.api_thumb_url;
+    if (img.local_path) return img.local_path;
+    return '';
+  };
+
+  currentBoard = {
+    id: boardId || data.id,
+    name: data.name || data.id,
+    setting_text: data.setting_text || '',
+    visual_goal_summary: data.visual_goal_summary || '',
+    core_references: data.core_references || [],
+    anti_references: data.anti_references || [],
+    sections: data.sections || [],
+    images: data.images || [],
+    resolver: resolver,
+  };
+  pendingOrders = {};
+
+  layoutMode = 'board';
+  updateModeButtons();
+  emptyState.classList.add('hidden');
+  renderBoard();
+  fitAll();
 }
 
 // ── Render ──
 function render(skipFit) {
   world.innerHTML = '';
   scatterTitleX = null; scatterTitleY = null;
+  if (currentBoard && layoutMode === 'board') { renderBoard(); if (!skipFit) fitAll(); return; }
   if (collections.length === 0) { applyTransform(); return; }
   if (layoutMode === 'scatter' && hasMetrics()) renderScatter();
   else renderGrid();
@@ -338,7 +524,7 @@ function render(skipFit) {
 
 function resolveImg(col, path) {
   if (col.resolver) return col.resolver(path);
-  return path; // fallback: bare URL
+  return path;
 }
 
 function renderGrid() {
@@ -427,6 +613,225 @@ function renderScatter() {
   });
 }
 
+// ── Board Rendering ──
+function renderBoard() {
+  world.innerHTML = '';
+  if (!currentBoard) return;
+  const b = currentBoard;
+  const container = document.createElement('div');
+  container.className = 'board-container';
+  container.style.cssText = 'position:absolute;top:0;left:0;padding:24px;min-width:800px;';
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'board-header';
+  header.innerHTML = `<h1>${esc(b.name)}</h1>${b.visual_goal_summary ? `<div class="goal">${esc(b.visual_goal_summary)}</div>` : ''}`;
+  container.appendChild(header);
+
+  // Core references
+  if (b.core_references && b.core_references.length) {
+    const coreDiv = document.createElement('div');
+    coreDiv.innerHTML = `<div class="board-core-label">Core References</div>`;
+    const coreGrid = document.createElement('div');
+    coreGrid.className = 'board-core';
+    b.core_references.forEach(ref => {
+      const img = findBoardImage(ref.image_id);
+      if (img) coreGrid.appendChild(createBoardCard(img, b));
+    });
+    coreDiv.appendChild(coreGrid);
+    container.appendChild(coreDiv);
+  }
+
+  // Sections
+  b.sections.forEach(section => {
+    const block = document.createElement('div');
+    block.className = 'section-block';
+    block.dataset.sectionId = section.section_id;
+
+    const allImgs = [...(section.key_images || []), ...(section.supporting_images || [])];
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'section-header';
+    headerDiv.innerHTML = `<h3>${esc(section.section_name)}</h3><span class="section-count">${allImgs.length} images</span>`;
+    block.appendChild(headerDiv);
+
+    if (section.summary) {
+      const sum = document.createElement('div');
+      sum.className = 'section-summary';
+      sum.textContent = section.summary;
+      block.appendChild(sum);
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'section-grid';
+    grid.dataset.sectionId = section.section_id;
+
+    // Use user_order if available, pending order, or default order
+    const order = pendingOrders[section.section_id] || section.user_order || null;
+    const orderedImgs = order ? orderByList(allImgs, order) : allImgs;
+
+    orderedImgs.forEach(ref => {
+      const img = findBoardImage(ref.image_id);
+      if (img) {
+        const card = createBoardCard(img, b);
+        card.dataset.imageId = img.id;
+        card.draggable = true;
+        card.addEventListener('dragstart', onDragStart);
+        card.addEventListener('dragend', onDragEnd);
+        card.addEventListener('dragover', onDragOver);
+        card.addEventListener('dragleave', onDragLeave);
+        card.addEventListener('drop', onDrop);
+        grid.appendChild(card);
+      }
+    });
+    block.appendChild(grid);
+
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'section-actions';
+    actions.innerHTML = `<button class="btn-apply" data-section="${section.section_id}">Apply Order</button><button class="btn-reset" data-section="${section.section_id}">Reset</button>`;
+    actions.querySelector('.btn-apply').addEventListener('click', () => applyOrder(section.section_id));
+    actions.querySelector('.btn-reset').addEventListener('click', () => resetOrder(section.section_id));
+    block.appendChild(actions);
+
+    if (section.missing_needs && section.missing_needs.length) {
+      const miss = document.createElement('div');
+      miss.className = 'section-missing';
+      miss.textContent = 'Missing: ' + section.missing_needs.join('; ');
+      block.appendChild(miss);
+    }
+
+    container.appendChild(block);
+  });
+
+  world.appendChild(container);
+}
+
+function createBoardCard(img, board) {
+  const card = document.createElement('div');
+  card.className = 'img-card';
+  const src = board.resolver ? board.resolver(img) : (img.local_path || '');
+  const score = img.final_score || img.quality_score || 0;
+  const cats = (img.categories || []).slice(0, 2).map(c => c.category).join(', ');
+  card.innerHTML = `<img src="${src}" loading="lazy" alt="">
+    ${score ? `<span class="score">${score.toFixed(2)}</span>` : ''}
+    <div class="overlay">${cats ? `<span class="tag">${cats}</span>` : ''}</div>`;
+  card.addEventListener('click', (e) => {
+    if (!e.defaultPrevented) openDetail(img, src);
+  });
+  return card;
+}
+
+function findBoardImage(imageId) {
+  if (!currentBoard) return null;
+  return currentBoard.images.find(i => i.id === imageId) || null;
+}
+
+function orderByList(refs, orderList) {
+  const map = new Map(refs.map(r => [r.image_id, r]));
+  const ordered = [];
+  orderList.forEach(id => { if (map.has(id)) { ordered.push(map.get(id)); map.delete(id); } });
+  map.forEach(r => ordered.push(r));
+  return ordered;
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+// ── Drag & Drop ──
+let dragSrcId = null;
+
+function onDragStart(e) {
+  dragSrcId = e.currentTarget.dataset.imageId;
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragSrcId);
+}
+
+function onDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+  dragSrcId = null;
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const card = e.currentTarget;
+  if (card.dataset.imageId !== dragSrcId) {
+    card.classList.add('drag-over');
+  }
+}
+
+function onDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+
+function onDrop(e) {
+  e.preventDefault();
+  const targetId = e.currentTarget.dataset.imageId;
+  const sectionId = e.currentTarget.closest('.section-grid').dataset.sectionId;
+  e.currentTarget.classList.remove('drag-over');
+
+  if (!dragSrcId || dragSrcId === targetId) return;
+
+  // Get current order from the grid
+  const grid = e.currentTarget.closest('.section-grid');
+  const cards = [...grid.querySelectorAll('.img-card')];
+  let ids = cards.map(c => c.dataset.imageId);
+
+  // Move dragSrcId to targetId's position
+  const fromIdx = ids.indexOf(dragSrcId);
+  const toIdx = ids.indexOf(targetId);
+  if (fromIdx === -1 || toIdx === -1) return;
+  ids.splice(fromIdx, 1);
+  ids.splice(toIdx, 0, dragSrcId);
+
+  pendingOrders[sectionId] = ids;
+  renderBoard();
+}
+
+// ── Apply / Reset Order ──
+async function applyOrder(sectionId) {
+  const order = pendingOrders[sectionId];
+  if (!order) { alert('No pending changes for this section.'); return; }
+
+  if (apiAvailable && currentBoard.id) {
+    try {
+      const r = await fetch(`${API_BASE}/api/boards/${encodeURIComponent(currentBoard.id)}/sections/${sectionId}/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order }),
+      });
+      if (!r.ok) throw new Error('API error: ' + r.status);
+      delete pendingOrders[sectionId];
+      // Update local board data
+      const section = currentBoard.sections.find(s => s.section_id === sectionId);
+      if (section) section.user_order = order;
+      renderBoard();
+    } catch(e) {
+      alert('Failed to save via API: ' + e.message + '\nFalling back to download.');
+      downloadOrder(sectionId, order);
+    }
+  } else {
+    downloadOrder(sectionId, order);
+  }
+}
+
+function downloadOrder(sectionId, order) {
+  const data = { board_id: currentBoard?.id, section_id: sectionId, user_order: order };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `user_order_${sectionId}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  alert('Order file downloaded.\nPlace it in the board folder and run:\n  run.py reorder --board <id> --section ' + sectionId + ' --order ' + order.join(' '));
+}
+
+function resetOrder(sectionId) {
+  delete pendingOrders[sectionId];
+  renderBoard();
+}
+
 // ── Metric helpers ──
 function getMetric(img, key) { const v = (img.visual_metrics||{})[key] ?? (img.subjective_metrics||{})[key]; return typeof v === 'number' ? v : null; }
 function hasMetrics() { return allImages.some(({img}) => img.visual_metrics && Object.keys(img.visual_metrics).length > 0); }
@@ -484,28 +889,32 @@ function updateAxisInfo() {
 function openDetail(img, src) {
   document.getElementById('detail-img').src = src;
   document.getElementById('detailDesc').textContent = img.description || '';
-  const score = img.score || img.quality_score || 0;
+  const score = img.score || img.quality_score || img.final_score || 0;
   const parts = [];
-  if (score) parts.push(`<span>Score: ${score}</span>`);
+  if (score) parts.push(`<span>Score: ${typeof score === 'number' ? score.toFixed(2) : score}</span>`);
   if (img.mood) parts.push(`<span>${img.mood}</span>`);
   if (img.style) parts.push(`<span>${img.style}</span>`);
+  if (img.analysis && img.analysis.visual_summary) parts.push(`<span>${img.analysis.visual_summary.substring(0,80)}</span>`);
   document.getElementById('detailMeta').innerHTML = parts.join('');
-  document.getElementById('detailTags').innerHTML = (img.tags||[]).map(t=>`<span>${t}</span>`).join('');
+  const tags = img.tags || (img.analysis ? img.analysis.style_tags : []) || [];
+  document.getElementById('detailTags').innerHTML = tags.map(t=>`<span>${t}</span>`).join('');
   const md = document.getElementById('detail-metrics'); md.innerHTML = '';
-  const allM = {...(img.visual_metrics||{}), ...(img.subjective_metrics||{})};
-  Object.entries(allM).filter(([k,v])=>v!=null&&METRIC_DEFS[k]).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{
-    const d = METRIC_DEFS[k];
-    md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${d?.axis||''}">${d?.label||k}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(v*100)}%"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
+  const vm = img.visual_metrics || (img.analysis ? {} : {});
+  const curation = img.curation_scores || {};
+  const allM = {...vm, ...curation};
+  Object.entries(allM).filter(([k,v])=>v!=null).sort((a,b)=>b[1]-a[1]).slice(0,15).forEach(([k,v])=>{
+    const d = METRIC_DEFS[k] || { label: k, axis: '' };
+    md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${d.axis}">${d.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(v*100)}%"></div></div><span class="bar-val">${typeof v==='number'?v.toFixed(2):v}</span></div>`;
   });
   detail.classList.add('active');
 }
 document.getElementById('detailClose').addEventListener('click', () => detail.classList.remove('active'));
 detail.addEventListener('click', e => { if (e.target === detail) detail.classList.remove('active'); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') detail.classList.remove('active'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { detail.classList.remove('active'); document.getElementById('boardModal').classList.remove('active'); } });
 
 // ── Pan & Zoom ──
 viewport.addEventListener('mousedown', e => {
-  if (e.target.closest('.img-card,.scatter-card')) return;
+  if (e.target.closest('.img-card,.scatter-card,.section-actions button,.section-grid')) return;
   isPanning = true; panStart = {x:e.clientX,y:e.clientY}; viewStart = {x:view.x,y:view.y}; viewport.classList.add('grabbing');
 });
 window.addEventListener('mousemove', e => {
@@ -532,7 +941,6 @@ viewport.addEventListener('touchend', () => { touchStart = null; });
 function applyTransform() {
   world.style.transform = `translate(${view.x*view.zoom}px,${view.y*view.zoom}px) scale(${view.zoom})`;
   document.getElementById('zoomLabel').textContent = Math.round(view.zoom*100)+'%';
-  // Counter-scale axis titles so they stay at fixed screen size
   if (scatterTitleX && scatterTitleX.parentNode) {
     const fs = 39 / view.zoom;
     scatterTitleX.setAttribute('font-size', fs);
@@ -549,11 +957,19 @@ function applyTransform() {
 
 // ── Fit ──
 function fitAll() {
+  if (layoutMode === 'board') {
+    const el = world.querySelector('.board-container');
+    if (el) {
+      const r = el.getBoundingClientRect();
+      fitRect(-40, -40, r.width + 80, r.height + 80);
+    }
+    return;
+  }
   const visible = collections.filter(c => c.visible !== false);
   if (!visible.length) return;
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   visible.forEach(col => {
-    const l=col.layout||{}, cs=l.cellSize||280, g=l.gap??10, p=l.padding??20, c=l.columns||5;
+    const l=col.layout||{}, cs=l.cellSize||280, g=l.gap??10, p=l.padding||20, c=l.columns||5;
     const rows=Math.ceil((col.images||[]).length/c);
     const w=p*2+c*cs+(c-1)*g, h=p*2+60+rows*cs+(rows-1)*g;
     minX=Math.min(minX,col.position.x); minY=Math.min(minY,col.position.y);
@@ -575,14 +991,14 @@ function fitRect(rx,ry,rw,rh) {
 function scheduleMinimap() { if (minimapVisible) requestAnimationFrame(drawMinimap); }
 function drawMinimap() {
   const visible = collections.filter(c => c.visible !== false);
-  if (!visible.length) return;
+  if (!visible.length && !currentBoard) return;
   const cw=180,ch=120;
   minimapCanvas.width=cw*2; minimapCanvas.height=ch*2; minimapCtx.scale(2,2); minimapCtx.clearRect(0,0,cw,ch);
   let b;
   if (layoutMode==='scatter') b={x:0,y:0,r:3000,b:3000};
-  else { b={x:Infinity,y:Infinity,r:-Infinity,b:-Infinity}; visible.forEach(col=>{const l=col.layout||{},cs=l.cellSize||280,g=l.gap??10,p=l.padding??20,c=l.columns||5,rows=Math.ceil((col.images||[]).length/c),w=p*2+c*cs+(c-1)*g,h=p*2+60+rows*cs+(rows-1)*g;b.x=Math.min(b.x,col.position.x);b.y=Math.min(b.y,col.position.y);b.r=Math.max(b.r,col.position.x+w);b.b=Math.max(b.b,col.position.y+h);}); }
+  else { b={x:Infinity,y:Infinity,r:-Infinity,b:-Infinity}; visible.forEach(col=>{const l=col.layout||{},cs=l.cellSize||280,g=l.gap??10,p=l.padding||20,c=l.columns||5,rows=Math.ceil((col.images||[]).length/c),w=p*2+c*cs+(c-1)*g,h=p*2+60+rows*cs+(rows-1)*g;b.x=Math.min(b.x,col.position.x);b.y=Math.min(b.y,col.position.y);b.r=Math.max(b.r,col.position.x+w);b.b=Math.max(b.b,col.position.y+h);}); }
   const pad=10,sx=(cw-pad*2)/(b.r-b.x||1),sy=(ch-pad*2)/(b.b-b.y||1),s=Math.min(sx,sy);
-  visible.forEach(col=>{minimapCtx.fillStyle=col.color||'#333';minimapCtx.globalAlpha=0.5;const l=col.layout||{},cs=l.cellSize||280,g=l.gap??10,p=l.padding??20,c=l.columns||5,rows=Math.ceil((col.images||[]).length/c),w=p*2+c*cs+(c-1)*g,h=p*2+60+rows*cs+(rows-1)*g;minimapCtx.fillRect(pad+(col.position.x-b.x)*s,pad+(col.position.y-b.y)*s,w*s,h*s);});
+  visible.forEach(col=>{minimapCtx.fillStyle=col.color||'#333';minimapCtx.globalAlpha=0.5;const l=col.layout||{},cs=l.cellSize||280,g=l.gap??10,p=l.padding||20,c=l.columns||5,rows=Math.ceil((col.images||[]).length/c),w=p*2+c*cs+(c-1)*g,h=p*2+60+rows*cs+(rows-1)*g;minimapCtx.fillRect(pad+(col.position.x-b.x)*s,pad+(col.position.y-b.y)*s,w*s,h*s);});
   const vw=viewport.clientWidth,vh=viewport.clientHeight;
   minimapCtx.globalAlpha=1;minimapCtx.strokeStyle='#e94560';minimapCtx.lineWidth=1.5;
   minimapCtx.strokeRect(pad+(-view.x-b.x)*s,pad+(-view.y-b.y)*s,vw/view.zoom*s,vh/view.zoom*s);
@@ -593,11 +1009,19 @@ function drawMinimap() {
 function updateModeButtons() {
   document.getElementById('btnGrid').classList.toggle('active', layoutMode==='grid');
   document.getElementById('btnScatter').classList.toggle('active', layoutMode==='scatter');
+  document.getElementById('btnBoard').classList.toggle('active', layoutMode==='board');
 }
 document.getElementById('btnGrid').addEventListener('click', () => { layoutMode='grid'; updateModeButtons(); render(); });
 document.getElementById('btnScatter').addEventListener('click', () => {
   if (!hasMetrics()) { alert('No metrics data in loaded collections.'); return; }
   layoutMode='scatter'; updateModeButtons(); render();
+});
+document.getElementById('btnBoard').addEventListener('click', () => {
+  if (!currentBoard) {
+    document.getElementById('loadBoardBtn').click();
+    return;
+  }
+  layoutMode='board'; updateModeButtons(); render();
 });
 document.getElementById('btnZoomIn').addEventListener('click', () => { const cx=viewport.clientWidth/2,cy=viewport.clientHeight/2,z=Math.min(5,view.zoom*1.3); view.x+=cx*(1/z-1/view.zoom); view.y+=cy*(1/z-1/view.zoom); view.zoom=z; applyTransform(); scheduleMinimap(); });
 document.getElementById('btnZoomOut').addEventListener('click', () => { const cx=viewport.clientWidth/2,cy=viewport.clientHeight/2,z=Math.max(0.02,view.zoom/1.3); view.x+=cx*(1/z-1/view.zoom); view.y+=cy*(1/z-1/view.zoom); view.zoom=z; applyTransform(); scheduleMinimap(); });

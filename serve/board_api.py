@@ -9,7 +9,7 @@ import json
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 from config import BOARDS_DIR, DB_PATH
 
@@ -70,7 +70,7 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        path = urlparse(self.path).path.rstrip("/")
+        path = unquote(urlparse(self.path).path.rstrip("/"))
         query = parse_qs(urlparse(self.path).query)
 
         if path == "/api/health":
@@ -177,7 +177,7 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"Unknown endpoint: {path}"}, 404)
 
     def do_POST(self):
-        path = urlparse(self.path).path.rstrip("/")
+        path = unquote(urlparse(self.path).path.rstrip("/"))
 
         if not path.startswith("/api/boards/"):
             self._send_json({"error": "Unknown endpoint"}, 404)
