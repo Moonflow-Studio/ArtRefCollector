@@ -520,7 +520,7 @@ viewport.addEventListener('wheel', e => {
   e.preventDefault();
   const d = -e.deltaY*0.001, nz = Math.max(0.02, Math.min(5, view.zoom*(1+d)));
   const r = viewport.getBoundingClientRect(), mx = e.clientX-r.left, my = e.clientY-r.top;
-  view.x += mx*(1/view.zoom-1/nz); view.y += my*(1/view.zoom-1/nz); view.zoom = nz;
+  view.x += mx*(1/nz - 1/view.zoom); view.y += my*(1/nz - 1/view.zoom); view.zoom = nz;
   applyTransform(); scheduleMinimap();
 }, {passive:false});
 
@@ -599,8 +599,8 @@ document.getElementById('btnScatter').addEventListener('click', () => {
   if (!hasMetrics()) { alert('No metrics data in loaded collections.'); return; }
   layoutMode='scatter'; updateModeButtons(); render();
 });
-document.getElementById('btnZoomIn').addEventListener('click', () => { const cx=viewport.clientWidth/2,cy=viewport.clientHeight/2,z=Math.min(5,view.zoom*1.3); view.x+=cx*(1/view.zoom-1/z); view.y+=cy*(1/view.zoom-1/z); view.zoom=z; applyTransform(); scheduleMinimap(); });
-document.getElementById('btnZoomOut').addEventListener('click', () => { const cx=viewport.clientWidth/2,cy=viewport.clientHeight/2,z=Math.max(0.02,view.zoom/1.3); view.x+=cx*(1/view.zoom-1/z); view.y+=cy*(1/view.zoom-1/z); view.zoom=z; applyTransform(); scheduleMinimap(); });
+document.getElementById('btnZoomIn').addEventListener('click', () => { const cx=viewport.clientWidth/2,cy=viewport.clientHeight/2,z=Math.min(5,view.zoom*1.3); view.x+=cx*(1/z-1/view.zoom); view.y+=cy*(1/z-1/view.zoom); view.zoom=z; applyTransform(); scheduleMinimap(); });
+document.getElementById('btnZoomOut').addEventListener('click', () => { const cx=viewport.clientWidth/2,cy=viewport.clientHeight/2,z=Math.max(0.02,view.zoom/1.3); view.x+=cx*(1/z-1/view.zoom); view.y+=cy*(1/z-1/view.zoom); view.zoom=z; applyTransform(); scheduleMinimap(); });
 document.getElementById('btnFit').addEventListener('click', fitAll);
 document.getElementById('btnAxes').addEventListener('click', () => { axesVisible=!axesVisible; axesPanel.classList.toggle('visible',axesVisible); });
 document.getElementById('btnMinimap').addEventListener('click', () => { minimapVisible=!minimapVisible; minimap.classList.toggle('visible',minimapVisible); if(minimapVisible) drawMinimap(); });
