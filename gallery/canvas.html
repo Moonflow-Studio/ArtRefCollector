@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Art Ref Canvas</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0c0c0c;
+  --surface: #161616;
+  --border: #2a2a2a;
+  --text: #e0e0e0;
+  --text-dim: #888;
+  --accent: #e94560;
+  --accent-glow: rgba(233,69,96,0.15);
+}
+html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+
+/* ── Welcome ── */
+#welcome {
+  position: fixed; inset: 0; z-index: 2000;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: var(--bg);
+}
+#welcome.hidden { display: none; }
+#welcome h1 { font-size: 28px; font-weight: 600; margin-bottom: 8px; }
+#welcome p { color: var(--text-dim); margin-bottom: 32px; font-size: 14px; }
+.drop-zone {
+  width: 420px; height: 200px; border: 2px dashed var(--border); border-radius: 16px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  cursor: pointer; transition: border-color 0.2s, background 0.2s;
+}
+.drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-glow); }
+.drop-zone svg { width: 40px; height: 40px; stroke: var(--text-dim); margin-bottom: 12px; }
+.drop-zone span { font-size: 14px; color: var(--text-dim); }
+.drop-zone small { font-size: 12px; color: #555; margin-top: 6px; }
+#welcome input[type=file] { display: none; }
+
+/* ── Viewport ── */
+#viewport { width: 100%; height: 100%; overflow: hidden; position: relative; cursor: grab; }
+#viewport.grabbing { cursor: grabbing; }
+#world { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+
+/* ── Collection ── */
+.collection {
+  position: absolute; border-radius: 16px; border: 1px solid var(--border);
+  background: rgba(22,22,22,0.5);
+}
+.collection-header {
+  position: sticky; top: 0; z-index: 10; padding: 16px 20px;
+  background: linear-gradient(var(--surface), transparent);
+  border-radius: 16px 16px 0 0;
+}
+.collection-header h2 { font-size: 18px; font-weight: 600; }
+.collection-header .desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.collection-header .count { font-size: 11px; color: #555; margin-top: 4px; }
+.collection-grid { display: grid; padding: 0 16px 16px; }
+
+/* ── Scatter card ── */
+.scatter-card {
+  position: absolute; border-radius: 10px; overflow: hidden;
+  background: var(--surface); cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s; border: 2px solid transparent;
+}
+.scatter-card:hover { transform: translateY(-3px) scale(1.05); box-shadow: 0 6px 24px var(--accent-glow); z-index: 100 !important; }
+.scatter-card img { width: 100%; height: 100%; object-fit: cover; display: block; background: #111; }
+
+/* ── Axes overlay ── */
+#axesOverlay {
+  position: absolute; top: 0; left: 0; pointer-events: none;
+}
+.axis-line { stroke: #333; stroke-width: 1; }
+.axis-label { fill: #555; font-size: 11px; font-family: inherit; }
+.axis-title { fill: #999; font-size: 13px; font-weight: 600; font-family: inherit; }
+.axis-tick { stroke: #2a2a2a; stroke-width: 1; }
+
+/* ── Image card (grid mode) ── */
+.img-card {
+  position: relative; border-radius: 10px; overflow: hidden;
+  background: var(--surface); cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.img-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px var(--accent-glow); }
+.img-card img { width: 100%; display: block; object-fit: cover; background: #111; min-height: 80px; }
+.img-card .score {
+  position: absolute; top: 6px; right: 6px;
+  background: rgba(0,0,0,0.75); color: var(--accent);
+  font-size: 12px; font-weight: 700; padding: 1px 7px; border-radius: 6px;
+}
+.img-card .overlay {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  padding: 24px 10px 8px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.85));
+  opacity: 0; transition: opacity 0.2s;
+}
+.img-card:hover .overlay { opacity: 1; }
+.img-card .overlay .tag {
+  display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 6px;
+  background: rgba(233,69,96,0.25); color: #f0a0b0; margin: 1px 2px;
+}
+
+/* ── Detail modal ── */
+#detail {
+  display: none; position: fixed; inset: 0; z-index: 3000;
+  background: rgba(0,0,0,0.94); justify-content: center; align-items: center;
+}
+#detail.active { display: flex; }
+#detail .close-btn { position: absolute; top: 16px; right: 20px; font-size: 28px; color: #666; cursor: pointer; background: none; border: none; z-index: 1; }
+#detail .close-btn:hover { color: #fff; }
+#detail-img { max-width: 90vw; max-height: 80vh; object-fit: contain; border-radius: 8px; }
+#detail-info {
+  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: rgba(22,22,22,0.95); padding: 16px 24px; border-radius: 12px;
+  max-width: 700px; width: 90vw; text-align: center;
+}
+#detail-info .meta-row { display: flex; justify-content: center; gap: 16px; margin-bottom: 8px; font-size: 12px; color: var(--text-dim); flex-wrap: wrap; }
+#detail-info .meta-row span { display: flex; align-items: center; gap: 4px; }
+#detail-info .desc-text { font-size: 13px; color: #ccc; line-height: 1.5; margin-bottom: 8px; }
+#detail-info .tag-list { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
+#detail-info .tag-list span { font-size: 11px; padding: 3px 8px; border-radius: 8px; background: rgba(233,69,96,0.25); color: #f0a0b0; }
+#detail-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; margin-top: 10px; text-align: left; }
+.metric-bar { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.metric-bar .bar-label { color: #888; min-width: 60px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.metric-bar .bar-track { flex: 1; height: 4px; background: #222; border-radius: 2px; position: relative; }
+.metric-bar .bar-fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width 0.3s; }
+.metric-bar .bar-val { color: #aaa; min-width: 28px; text-align: right; }
+
+/* ── Toolbar ── */
+#toolbar {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1000;
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(22,22,22,0.92); backdrop-filter: blur(12px);
+  padding: 8px 16px; border-radius: 12px; border: 1px solid var(--border);
+  font-size: 13px; opacity: 0; transition: opacity 0.3s;
+}
+#toolbar.visible { opacity: 1; }
+#toolbar button {
+  background: none; border: 1px solid var(--border); color: var(--text);
+  padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  white-space: nowrap;
+}
+#toolbar button:hover { background: var(--border); }
+#toolbar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+#toolbar .sep { width: 1px; height: 20px; background: var(--border); }
+#toolbar #zoomLabel { color: var(--text-dim); min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ── Axes panel ── */
+#axesPanel {
+  position: fixed; top: 16px; right: 16px; z-index: 1000;
+  background: rgba(22,22,22,0.95); backdrop-filter: blur(12px);
+  border-radius: 12px; border: 1px solid var(--border);
+  padding: 16px; width: 260px; display: none;
+}
+#axesPanel.visible { display: block; }
+#axesPanel h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.axis-select-group { margin-bottom: 12px; }
+.axis-select-group label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.axis-select-group select {
+  width: 100%; padding: 6px 10px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; font-size: 13px;
+  cursor: pointer; appearance: none; outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23888'%3E%3Cpath d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+.axis-select-group select:focus { border-color: var(--accent); }
+.axis-info { font-size: 11px; color: #555; margin-top: 4px; line-height: 1.4; }
+#axesPanel .no-metrics { color: #664; font-size: 12px; padding: 12px 0; text-align: center; }
+
+/* ── Nav panel ── */
+#nav {
+  position: fixed; top: 16px; left: 16px; z-index: 1000;
+  background: rgba(22,22,22,0.92); backdrop-filter: blur(12px);
+  border-radius: 12px; border: 1px solid var(--border);
+  padding: 12px; min-width: 180px; max-width: 240px; max-height: 60vh;
+  overflow-y: auto; opacity: 0; transition: opacity 0.3s; font-size: 13px;
+}
+#nav.visible { opacity: 1; }
+#nav h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+#nav .nav-item {
+  padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px; transition: background 0.15s;
+}
+#nav .nav-item:hover { background: var(--border); }
+#nav .nav-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+#nav .nav-name { flex: 1; }
+#nav .nav-count { color: var(--text-dim); font-size: 11px; }
+
+/* ── Minimap ── */
+#minimap {
+  position: fixed; bottom: 70px; right: 16px; z-index: 1000;
+  width: 180px; height: 120px; border-radius: 8px;
+  background: rgba(22,22,22,0.9); border: 1px solid var(--border);
+  overflow: hidden; opacity: 0; transition: opacity 0.3s;
+}
+#minimap.visible { opacity: 1; }
+#minimap canvas { width: 100%; height: 100%; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="welcome">
+  <h1>Art Ref Canvas</h1>
+  <p>Drag & drop a config JSON, or click to browse</p>
+  <div class="drop-zone" id="dropZone">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M20 16v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2"/></svg>
+    <span>Drop config.json here</span>
+    <small>or click to select file</small>
+  </div>
+  <input type="file" id="fileInput" accept=".json">
+</div>
+
+<div id="viewport"><div id="world"></div></div>
+
+<div id="detail">
+  <button class="close-btn" id="detailClose">&times;</button>
+  <img id="detail-img" src="" alt="">
+  <div id="detail-info">
+    <div class="meta-row" id="detailMeta"></div>
+    <div class="desc-text" id="detailDesc"></div>
+    <div class="tag-list" id="detailTags"></div>
+    <div id="detail-metrics"></div>
+  </div>
+</div>
+
+<div id="nav"></div>
+
+<div id="axesPanel">
+  <h3>Axis Metrics</h3>
+  <div id="axesPanelContent"></div>
+</div>
+
+<div id="toolbar">
+  <button id="btnZoomOut">-</button>
+  <span id="zoomLabel">100%</span>
+  <button id="btnZoomIn">+</button>
+  <div class="sep"></div>
+  <button id="btnGrid" title="Collection grid layout">Grid</button>
+  <button id="btnScatter" title="Scatter by metrics">Scatter</button>
+  <div class="sep"></div>
+  <button id="btnFit">Fit</button>
+  <div class="sep"></div>
+  <button id="btnNav">Nav</button>
+  <button id="btnAxes">Axes</button>
+  <button id="btnMinimap">Map</button>
+</div>
+
+<div id="minimap"><canvas id="minimapCanvas"></canvas></div>
+
+<script>
+// ── Metric definitions ──
+const METRIC_DEFS = {
+  brightness:        { label: 'Brightness',    axis: '暗 ↔ 亮',     group: 'pixel' },
+  saturation:        { label: 'Saturation',    axis: '灰 ↔ 鲜艳',   group: 'pixel' },
+  color_temperature: { label: 'Color Temp',    axis: '冷 ↔ 暖',     group: 'pixel' },
+  dominant_hue:      { label: 'Dominant Hue',  axis: '蓝绿 ↔ 红黄', group: 'pixel' },
+  contrast:          { label: 'Contrast',      axis: '柔和 ↔ 强对比',group: 'pixel' },
+  color_complexity:  { label: 'Color Cmplx',   axis: '单纯 ↔ 丰富', group: 'pixel' },
+  edge_density:      { label: 'Edge Density',  axis: '简洁 ↔ 复杂', group: 'pixel' },
+  texture_complexity:{ label: 'Texture',       axis: '平滑 ↔ 粗糙', group: 'pixel' },
+  composition_x:     { label: 'Compos X',      axis: '左 ↔ 右',     group: 'pixel' },
+  composition_y:     { label: 'Compos Y',      axis: '上 ↔ 下',     group: 'pixel' },
+  spatial_openness:  { label: 'Openness',      axis: '封闭 ↔ 开阔', group: 'pixel' },
+  shot_scale:        { label: 'Shot Scale',    axis: '远景 ↔ 特写', group: 'subjective' },
+  spatial_scale:     { label: 'Spatial Scale', axis: '私密 ↔ 宏大', group: 'subjective' },
+  emotion_intensity: { label: 'Emotion',       axis: '平静 ↔ 紧张', group: 'subjective' },
+  oppression:        { label: 'Oppression',    axis: '开放 ↔ 压迫', group: 'subjective' },
+  religiousness:     { label: 'Religiousness', axis: '弱 ↔ 强',     group: 'subjective' },
+  industrialness:    { label: 'Industrial',    axis: '弱 ↔ 强',     group: 'subjective' },
+  fantasy_level:     { label: 'Fantasy',       axis: '现实 ↔ 奇幻', group: 'subjective' },
+  sci_fi_level:      { label: 'Sci-Fi',        axis: '现实 ↔ 科幻', group: 'subjective' },
+  decay_level:       { label: 'Decay',         axis: '完整 ↔ 破败', group: 'subjective' },
+  orderliness:       { label: 'Order',         axis: '混乱 ↔ 规整', group: 'subjective' },
+  ornateness:        { label: 'Ornateness',    axis: '朴素 ↔ 华丽', group: 'subjective' },
+  material_roughness:{ label: 'Roughness',     axis: '精致 ↔ 粗粝', group: 'subjective' },
+  era_feel:          { label: 'Era',           axis: '古典 ↔ 未来', group: 'subjective' },
+  reference_value:   { label: 'Ref Value',     axis: '弱 ↔ 强参考', group: 'subjective' },
+};
+
+// ── State ──
+let config = null, baseDir = '';
+let view = { x: 0, y: 0, zoom: 1 };
+let isPanning = false, panStart = { x: 0, y: 0 }, viewStart = { x: 0, y: 0 };
+let navVisible = false, minimapVisible = false, axesVisible = false;
+let layoutMode = 'grid'; // 'grid' | 'scatter'
+let selectedX = 'brightness', selectedY = 'saturation';
+let allImages = []; // flat list of { img, col, colIdx, imgIdx }
+
+const viewport = document.getElementById('viewport');
+const world = document.getElementById('world');
+const welcome = document.getElementById('welcome');
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const detail = document.getElementById('detail');
+const navEl = document.getElementById('nav');
+const toolbar = document.getElementById('toolbar');
+const minimap = document.getElementById('minimap');
+const minimapCanvas = document.getElementById('minimapCanvas');
+const minimapCtx = minimapCanvas.getContext('2d');
+const axesPanel = document.getElementById('axesPanel');
+
+// ── Config loading ──
+const DEFAULT_CONFIG = '../data/galleries/canvas-config.json';
+
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+function tryFetchConfig(url) {
+  baseDir = url.substring(0, url.lastIndexOf('/') + 1);
+  return fetch(url).then(r => r.json()).then(cfg => { config = cfg; hideWelcome(); initCanvas(); return true; }).catch(() => false);
+}
+const urlConfig = new URLSearchParams(location.search).get('config');
+tryFetchConfig(urlConfig || DEFAULT_CONFIG).then(ok => { if (!ok && urlConfig) tryFetchConfig(DEFAULT_CONFIG); });
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => { try { config = JSON.parse(e.target.result); baseDir = config.basePath || ''; hideWelcome(); initCanvas(); } catch (err) { alert('Invalid JSON: ' + err.message); } };
+  reader.readAsText(file);
+}
+function hideWelcome() { welcome.classList.add('hidden'); toolbar.classList.add('visible'); }
+function resolvePath(p) { if (!p) return ''; if (p.startsWith('http') || p.startsWith('data:') || p.startsWith('/')) return p; return baseDir + p; }
+
+// ── Metric helpers ──
+function getMetric(img, key) {
+  const vm = img.visual_metrics || {};
+  const sm = img.subjective_metrics || {};
+  const v = vm[key] ?? sm[key];
+  return (typeof v === 'number') ? v : null;
+}
+
+function getAvailableMetrics() {
+  const found = new Set();
+  allImages.forEach(({ img }) => {
+    Object.keys(img.visual_metrics || {}).forEach(k => { if (img.visual_metrics[k] != null) found.add(k); });
+    Object.keys(img.subjective_metrics || {}).forEach(k => { if (img.subjective_metrics[k] != null) found.add(k); });
+  });
+  return [...found].filter(k => METRIC_DEFS[k]);
+}
+
+function hasMetrics() { return allImages.some(({ img }) => img.visual_metrics && Object.keys(img.visual_metrics).length > 0); }
+
+// ── Init ──
+function initCanvas() {
+  // Flatten all images
+  allImages = [];
+  (config.collections || []).forEach((col, ci) => {
+    (col.images || []).forEach((img, ii) => {
+      allImages.push({ img, col, colIdx: ci, imgIdx: ii });
+    });
+  });
+  buildNav(config.collections || []);
+  buildAxesPanel();
+  render();
+}
+
+// ── Render dispatcher ──
+function render() {
+  world.innerHTML = '';
+  if (layoutMode === 'scatter' && hasMetrics()) renderScatter();
+  else renderGrid();
+  if (!config.viewport && layoutMode === 'grid') fitAll();
+  else if (layoutMode === 'scatter') fitScatter();
+  applyTransform();
+  scheduleMinimap();
+}
+
+// ── Grid mode ──
+function renderGrid() {
+  const collections = config.collections || [];
+  collections.forEach((col) => {
+    const layout = col.layout || { type: 'grid', columns: 5, cellSize: 280, gap: 10, padding: 20 };
+    const cellSize = layout.cellSize || 280, gap = layout.gap ?? 10, padding = layout.padding ?? 20, cols = layout.columns || 5;
+    const images = col.images || [], rows = Math.ceil(images.length / cols);
+    const colW = padding * 2 + cols * cellSize + (cols - 1) * gap;
+    const colH = padding * 2 + 60 + rows * cellSize + (rows - 1) * gap;
+
+    const colEl = document.createElement('div');
+    colEl.className = 'collection';
+    Object.assign(colEl.style, { left: col.position.x + 'px', top: col.position.y + 'px', width: colW + 'px', minHeight: colH + 'px', borderColor: col.color || 'var(--border)' });
+
+    colEl.innerHTML = `<div class="collection-header"><h2>${col.name || ''}</h2>${col.description ? `<div class="desc">${col.description}</div>` : ''}<div class="count">${images.length} images</div></div>`;
+    const grid = document.createElement('div');
+    grid.className = 'collection-grid';
+    grid.style.gridTemplateColumns = `repeat(${cols}, ${cellSize}px)`;
+    grid.style.gap = gap + 'px';
+    grid.style.padding = `0 ${padding}px ${padding}px`;
+
+    images.forEach(img => {
+      const card = makeGridCard(img, cellSize, col.color);
+      grid.appendChild(card);
+    });
+    colEl.appendChild(grid);
+    world.appendChild(colEl);
+  });
+}
+
+function makeGridCard(img, cellSize, colColor) {
+  const card = document.createElement('div');
+  card.className = 'img-card';
+  const imgSrc = resolvePath(img.path);
+  const score = img.score || img.quality_score || 0;
+  card.innerHTML =
+    `<img src="${imgSrc}" loading="lazy" alt="" style="height:${cellSize}px">`
+    + (score ? `<span class="score">${score}</span>` : '')
+    + `<div class="overlay">${(img.tags || []).slice(0, 6).map(t => `<span class="tag">${t}</span>`).join('')}</div>`;
+  card.addEventListener('click', () => openDetail(img, imgSrc));
+  return card;
+}
+
+// ── Scatter mode ──
+function renderScatter() {
+  const PLOT_SIZE = 3000, PAD = 250, CARD = 120;
+  const plotL = PAD, plotR = PLOT_SIZE - PAD, plotT = PAD, plotB = PLOT_SIZE - PAD;
+  const plotW = plotR - plotL, plotH = plotB - plotT;
+
+  // SVG axes
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'axesOverlay';
+  svg.setAttribute('width', PLOT_SIZE);
+  svg.setAttribute('height', PLOT_SIZE);
+  svg.style.position = 'absolute'; svg.style.top = '0'; svg.style.left = '0';
+  svg.style.pointerEvents = 'none';
+
+  // Background
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('x', plotL); bg.setAttribute('y', plotT);
+  bg.setAttribute('width', plotW); bg.setAttribute('height', plotH);
+  bg.setAttribute('fill', 'rgba(20,20,20,0.4)'); bg.setAttribute('rx', '8');
+  svg.appendChild(bg);
+
+  // Grid lines + ticks
+  for (let i = 0; i <= 4; i++) {
+    const v = i / 4;
+    const x = plotL + v * plotW, y = plotT + v * plotH;
+    // Vertical
+    const vl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    vl.setAttribute('x1', x); vl.setAttribute('y1', plotT); vl.setAttribute('x2', x); vl.setAttribute('y2', plotB);
+    vl.setAttribute('class', 'axis-tick'); svg.appendChild(vl);
+    const vt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    vt.setAttribute('x', x); vt.setAttribute('y', plotB + 20);
+    vt.setAttribute('text-anchor', 'middle'); vt.setAttribute('class', 'axis-label');
+    vt.textContent = v.toFixed(2); svg.appendChild(vt);
+    // Horizontal
+    const hl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    hl.setAttribute('x1', plotL); hl.setAttribute('y1', y); hl.setAttribute('x2', plotR); hl.setAttribute('y2', y);
+    hl.setAttribute('class', 'axis-tick'); svg.appendChild(hl);
+    const ht = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    ht.setAttribute('x', plotL - 10); ht.setAttribute('y', y + 4);
+    ht.setAttribute('text-anchor', 'end'); ht.setAttribute('class', 'axis-label');
+    ht.textContent = (1 - v).toFixed(2); svg.appendChild(ht);
+  }
+
+  // Axis titles
+  const xDef = METRIC_DEFS[selectedX] || {};
+  const yDef = METRIC_DEFS[selectedY] || {};
+  const xt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  xt.setAttribute('x', (plotL + plotR) / 2); xt.setAttribute('y', plotB + 46);
+  xt.setAttribute('text-anchor', 'middle'); xt.setAttribute('class', 'axis-title');
+  xt.textContent = `${xDef.label || selectedX}  —  ${xDef.axis || ''}`;
+  svg.appendChild(xt);
+
+  const yt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  yt.setAttribute('x', 14); yt.setAttribute('y', (plotT + plotB) / 2);
+  yt.setAttribute('text-anchor', 'middle'); yt.setAttribute('class', 'axis-title');
+  yt.setAttribute('transform', `rotate(-90, 14, ${(plotT + plotB) / 2})`);
+  yt.textContent = `${yDef.label || selectedY}  —  ${yDef.axis || ''}`;
+  svg.appendChild(yt);
+
+  world.appendChild(svg);
+
+  // Image cards
+  allImages.forEach(({ img, col }) => {
+    const mx = getMetric(img, selectedX);
+    const my = getMetric(img, selectedY);
+    if (mx === null || my === null) return;
+
+    const px = plotL + mx * plotW;
+    const py = plotB - my * plotH; // Y inverted
+
+    const card = document.createElement('div');
+    card.className = 'scatter-card';
+    card.style.left = (px - CARD / 2) + 'px';
+    card.style.top = (py - CARD / 2) + 'px';
+    card.style.width = CARD + 'px';
+    card.style.height = CARD + 'px';
+    card.style.borderColor = col.color || '#555';
+    card.style.zIndex = Math.round(mx * 100);
+
+    const imgSrc = resolvePath(img.path);
+    card.innerHTML = `<img src="${imgSrc}" loading="lazy" alt="">`;
+    card.addEventListener('click', () => openDetail(img, imgSrc));
+    world.appendChild(card);
+  });
+}
+
+// ── Axes panel ──
+function buildAxesPanel() {
+  const content = document.getElementById('axesPanelContent');
+  const metrics = getAvailableMetrics();
+
+  if (metrics.length === 0) {
+    content.innerHTML = '<div class="no-metrics">No metrics data found.<br>Run <code>metrics --session</code> first.</div>';
+    return;
+  }
+
+  const pixelOpts = metrics.filter(k => METRIC_DEFS[k]?.group === 'pixel');
+  const subOpts = metrics.filter(k => METRIC_DEFS[k]?.group === 'subjective');
+
+  function makeOptions(keys) {
+    let html = '';
+    if (keys.length) {
+      html += '<optgroup label="Pixel">';
+      keys.forEach(k => { html += `<option value="${k}">${METRIC_DEFS[k].label} (${METRIC_DEFS[k].axis})</option>`; });
+      html += '</optgroup>';
+    }
+    return html;
+  }
+  const opts = makeOptions(pixelOpts) + makeOptions(subOpts);
+
+  content.innerHTML =
+    `<div class="axis-select-group"><label>X-Axis</label><select id="selX">${opts}</select><div class="axis-info" id="infoX"></div></div>`
+    + `<div class="axis-select-group"><label>Y-Axis</label><select id="selY">${opts}</select><div class="axis-info" id="infoY"></div></div>`;
+
+  const selX = document.getElementById('selX');
+  const selY = document.getElementById('selY');
+  selX.value = selectedX; selY.value = selectedY;
+  updateAxisInfo();
+
+  selX.addEventListener('change', () => { selectedX = selX.value; updateAxisInfo(); if (layoutMode === 'scatter') render(); });
+  selY.addEventListener('change', () => { selectedY = selY.value; updateAxisInfo(); if (layoutMode === 'scatter') render(); });
+}
+
+function updateAxisInfo() {
+  const xd = METRIC_DEFS[selectedX], yd = METRIC_DEFS[selectedY];
+  const ix = document.getElementById('infoX'), iy = document.getElementById('infoY');
+  if (ix) ix.textContent = xd ? `${xd.axis} (${xd.group})` : '';
+  if (iy) iy.textContent = yd ? `${yd.axis} (${yd.group})` : '';
+}
+
+// ── Detail modal ──
+function openDetail(img, src) {
+  document.getElementById('detail-img').src = src;
+  document.getElementById('detailDesc').textContent = img.description || '';
+
+  const score = img.score || img.quality_score || 0;
+  const metaParts = [];
+  if (score) metaParts.push(`<span>Score: ${score}</span>`);
+  if (img.mood) metaParts.push(`<span>${img.mood}</span>`);
+  if (img.style) metaParts.push(`<span>${img.style}</span>`);
+  if (img.composition) metaParts.push(`<span>${img.composition}</span>`);
+  document.getElementById('detailMeta').innerHTML = metaParts.join('');
+
+  const tags = (img.tags || []).map(t => `<span>${t}</span>`).join('');
+  document.getElementById('detailTags').innerHTML = tags;
+
+  // Metrics bars
+  const metricsDiv = document.getElementById('detail-metrics');
+  metricsDiv.innerHTML = '';
+  const allM = { ...(img.visual_metrics || {}), ...(img.subjective_metrics || {}) };
+  const entries = Object.entries(allM).filter(([k, v]) => v != null && METRIC_DEFS[k]).sort((a, b) => b[1] - a[1]);
+  if (entries.length) {
+    entries.forEach(([k, v]) => {
+      const d = METRIC_DEFS[k];
+      metricsDiv.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${d?.axis || ''}">${d?.label || k}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(v * 100)}%"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
+    });
+  }
+  detail.classList.add('active');
+}
+
+document.getElementById('detailClose').addEventListener('click', () => detail.classList.remove('active'));
+detail.addEventListener('click', e => { if (e.target === detail) detail.classList.remove('active'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') detail.classList.remove('active'); });
+
+// ── Pan & Zoom ──
+viewport.addEventListener('mousedown', e => {
+  if (e.target.closest('.img-card, .scatter-card')) return;
+  isPanning = true; panStart = { x: e.clientX, y: e.clientY }; viewStart = { x: view.x, y: view.y };
+  viewport.classList.add('grabbing');
+});
+window.addEventListener('mousemove', e => {
+  if (!isPanning) return;
+  view.x = viewStart.x + (e.clientX - panStart.x) / view.zoom;
+  view.y = viewStart.y + (e.clientY - panStart.y) / view.zoom;
+  applyTransform(); scheduleMinimap();
+});
+window.addEventListener('mouseup', () => { isPanning = false; viewport.classList.remove('grabbing'); });
+
+viewport.addEventListener('wheel', e => {
+  e.preventDefault();
+  const delta = -e.deltaY * 0.001;
+  const newZoom = Math.max(0.02, Math.min(5, view.zoom * (1 + delta)));
+  const rect = viewport.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  view.x += mx * (1 / view.zoom - 1 / newZoom);
+  view.y += my * (1 / view.zoom - 1 / newZoom);
+  view.zoom = newZoom;
+  applyTransform(); scheduleMinimap();
+}, { passive: false });
+
+let touchStart = null;
+viewport.addEventListener('touchstart', e => { if (e.touches.length === 1) touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, vx: view.x, vy: view.y }; });
+viewport.addEventListener('touchmove', e => { if (e.touches.length === 1 && touchStart) { e.preventDefault(); view.x = touchStart.vx + (e.touches[0].clientX - touchStart.x) / view.zoom; view.y = touchStart.vy + (e.touches[0].clientY - touchStart.y) / view.zoom; applyTransform(); scheduleMinimap(); } }, { passive: false });
+viewport.addEventListener('touchend', () => { touchStart = null; });
+
+function applyTransform() {
+  world.style.transform = `translate(${view.x * view.zoom}px, ${view.y * view.zoom}px) scale(${view.zoom})`;
+  document.getElementById('zoomLabel').textContent = Math.round(view.zoom * 100) + '%';
+}
+
+// ── Fit views ──
+function fitAll() {
+  if (!config) return;
+  const cols = config.collections || [];
+  if (!cols.length) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  cols.forEach(col => {
+    const l = col.layout || {}, cs = l.cellSize || 280, g = l.gap ?? 10, p = l.padding ?? 20, c = l.columns || 5;
+    const rows = Math.ceil((col.images || []).length / c);
+    const w = p * 2 + c * cs + (c - 1) * g, h = p * 2 + 60 + rows * cs + (rows - 1) * g;
+    minX = Math.min(minX, col.position.x); minY = Math.min(minY, col.position.y);
+    maxX = Math.max(maxX, col.position.x + w); maxY = Math.max(maxY, col.position.y + h);
+  });
+  fitRect(minX, minY, maxX - minX, maxY - minY);
+}
+
+function fitScatter() { fitRect(0, 0, 3000, 3000); }
+
+function fitRect(rx, ry, rw, rh) {
+  const vw = viewport.clientWidth, vh = viewport.clientHeight;
+  const scaleX = vw / (rw + 100), scaleY = vh / (rh + 100);
+  view.zoom = Math.min(scaleX, scaleY, 1);
+  view.x = -(rx - 50); view.y = -(ry - 50);
+  applyTransform(); scheduleMinimap();
+}
+
+// ── Nav ──
+function buildNav(collections) {
+  navEl.innerHTML = '<h3>Collections</h3>';
+  collections.forEach(col => {
+    const item = document.createElement('div');
+    item.className = 'nav-item';
+    item.innerHTML = `<span class="nav-dot" style="background:${col.color || '#555'}"></span><span class="nav-name">${col.name || ''}</span><span class="nav-count">${(col.images || []).length}</span>`;
+    item.addEventListener('click', () => focusCollection(col));
+    navEl.appendChild(item);
+  });
+}
+
+function focusCollection(col) {
+  if (layoutMode === 'scatter') { layoutMode = 'grid'; updateModeButtons(); render(); return; }
+  const l = col.layout || {}, cs = l.cellSize || 280, g = l.gap ?? 10, p = l.padding ?? 20, c = l.columns || 5;
+  const rows = Math.ceil((col.images || []).length / c);
+  const w = p * 2 + c * cs + (c - 1) * g, h = p * 2 + 60 + rows * cs + (rows - 1) * g;
+  fitRect(col.position.x, col.position.y, w, h);
+}
+
+// ── Minimap ──
+function scheduleMinimap() { if (minimapVisible) requestAnimationFrame(drawMinimap); }
+
+function drawMinimap() {
+  if (!config) return;
+  const cw = 180, ch = 120;
+  minimapCanvas.width = cw * 2; minimapCanvas.height = ch * 2;
+  minimapCtx.scale(2, 2); minimapCtx.clearRect(0, 0, cw, ch);
+
+  let bounds;
+  if (layoutMode === 'scatter') { bounds = { minX: 0, minY: 0, maxX: 3000, maxY: 3000 }; }
+  else {
+    const cols = config.collections || [];
+    bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    cols.forEach(col => {
+      const l = col.layout || {}, cs = l.cellSize || 280, g = l.gap ?? 10, p = l.padding ?? 20, c = l.columns || 5;
+      const rows = Math.ceil((col.images || []).length / c);
+      const w = p * 2 + c * cs + (c - 1) * g, h = p * 2 + 60 + rows * cs + (rows - 1) * g;
+      bounds.minX = Math.min(bounds.minX, col.position.x); bounds.minY = Math.min(bounds.minY, col.position.y);
+      bounds.maxX = Math.max(bounds.maxX, col.position.x + w); bounds.maxY = Math.max(bounds.maxY, col.position.y + h);
+    });
+  }
+  const pad = 10, sx = (cw - pad * 2) / (bounds.maxX - bounds.minX || 1), sy = (ch - pad * 2) / (bounds.maxY - bounds.minY || 1), s = Math.min(sx, sy);
+
+  if (layoutMode === 'grid') {
+    (config.collections || []).forEach(col => {
+      const l = col.layout || {}, cs = l.cellSize || 280, g = l.gap ?? 10, p = l.padding ?? 20, c = l.columns || 5;
+      const rows = Math.ceil((col.images || []).length / c);
+      const w = p * 2 + c * cs + (c - 1) * g, h = p * 2 + 60 + rows * cs + (rows - 1) * g;
+      minimapCtx.fillStyle = col.color || '#333'; minimapCtx.globalAlpha = 0.5;
+      minimapCtx.fillRect(pad + (col.position.x - bounds.minX) * s, pad + (col.position.y - bounds.minY) * s, w * s, h * s);
+    });
+  } else {
+    allImages.forEach(({ img, col }) => {
+      const mx = getMetric(img, selectedX), my = getMetric(img, selectedY);
+      if (mx === null || my === null) return;
+      const PLOT = 3000, P = 250;
+      const px = P + mx * (PLOT - 2 * P), py = PLOT - P - my * (PLOT - 2 * P);
+      minimapCtx.fillStyle = col.color || '#555'; minimapCtx.globalAlpha = 0.7;
+      minimapCtx.fillRect(pad + (px - bounds.minX) * s - 1, pad + (py - bounds.minY) * s - 1, 3, 3);
+    });
+  }
+
+  const vw = viewport.clientWidth, vh = viewport.clientHeight;
+  minimapCtx.globalAlpha = 1; minimapCtx.strokeStyle = '#e94560'; minimapCtx.lineWidth = 1.5;
+  minimapCtx.strokeRect(pad + (-view.x - bounds.minX) * s, pad + (-view.y - bounds.minY) * s, vw / view.zoom * s, vh / view.zoom * s);
+  minimapCtx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+// ── Mode buttons ──
+function updateModeButtons() {
+  document.getElementById('btnGrid').classList.toggle('active', layoutMode === 'grid');
+  document.getElementById('btnScatter').classList.toggle('active', layoutMode === 'scatter');
+}
+
+document.getElementById('btnGrid').addEventListener('click', () => { layoutMode = 'grid'; updateModeButtons(); render(); });
+document.getElementById('btnScatter').addEventListener('click', () => {
+  if (!hasMetrics()) { alert('No metrics data. Run `metrics --session <sid>` first.'); return; }
+  layoutMode = 'scatter'; updateModeButtons(); render();
+});
+
+// ── Toolbar ──
+document.getElementById('btnZoomIn').addEventListener('click', () => {
+  const cx = viewport.clientWidth / 2, cy = viewport.clientHeight / 2;
+  const z = Math.min(5, view.zoom * 1.3); view.x += cx * (1 / view.zoom - 1 / z); view.y += cy * (1 / view.zoom - 1 / z); view.zoom = z; applyTransform(); scheduleMinimap();
+});
+document.getElementById('btnZoomOut').addEventListener('click', () => {
+  const cx = viewport.clientWidth / 2, cy = viewport.clientHeight / 2;
+  const z = Math.max(0.02, view.zoom / 1.3); view.x += cx * (1 / view.zoom - 1 / z); view.y += cy * (1 / view.zoom - 1 / z); view.zoom = z; applyTransform(); scheduleMinimap();
+});
+document.getElementById('btnFit').addEventListener('click', () => { if (layoutMode === 'scatter') fitScatter(); else fitAll(); });
+document.getElementById('btnNav').addEventListener('click', () => { navVisible = !navVisible; navEl.classList.toggle('visible', navVisible); });
+document.getElementById('btnAxes').addEventListener('click', () => { axesVisible = !axesVisible; axesPanel.classList.toggle('visible', axesVisible); });
+document.getElementById('btnMinimap').addEventListener('click', () => { minimapVisible = !minimapVisible; minimap.classList.toggle('visible', minimapVisible); if (minimapVisible) drawMinimap(); });
+
+updateModeButtons();
+</script>
+</body>
+</html>
