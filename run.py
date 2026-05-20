@@ -502,6 +502,19 @@ def cmd_analyze_board(args):
     print(json.dumps(output, ensure_ascii=False, indent=2))
 
 
+def cmd_rank(args):
+    """Run dedup + scoring + status assignment for a board."""
+    from analyze.board_ranker import rank_board_images
+
+    result = rank_board_images(
+        board_id=args.board,
+        phash_threshold=args.phash_threshold,
+        clip_threshold=args.threshold,
+        use_clip=args.clip,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def cmd_pipeline(args):
     ensure_dirs()
     sid = new_session()
@@ -676,6 +689,13 @@ def main():
     p.add_argument("--model", default="zhipu:glm-4.6v")
     p.add_argument("--status", default="candidate", help="Filter images by status")
 
+    # rank
+    p = sub.add_parser("rank")
+    p.add_argument("--board", required=True, help="Board ID")
+    p.add_argument("--phash-threshold", type=int, default=10)
+    p.add_argument("--threshold", type=float, default=0.92)
+    p.add_argument("--clip", action="store_true", help="Enable CLIP semantic dedup")
+
     # pipeline
     p = sub.add_parser("pipeline")
     p.add_argument("keywords")
@@ -707,6 +727,7 @@ def main():
         "parse": cmd_parse,
         "plan": cmd_plan,
         "analyze-board": cmd_analyze_board,
+        "rank": cmd_rank,
         "pipeline": cmd_pipeline,
     }
     commands[args.command](args)
