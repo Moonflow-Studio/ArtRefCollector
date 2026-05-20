@@ -6,9 +6,11 @@ DATA_DIR = BASE_DIR / "data"
 IMAGES_DIR = DATA_DIR / "images"
 THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 SESSIONS_DIR = DATA_DIR / "sessions"
+METRICS_DIR = DATA_DIR / "metrics"
 FAISS_DIR = DATA_DIR / "faiss_index"
 LANCEDB_DIR = DATA_DIR / "lancedb"
 GALLERIES_DIR = DATA_DIR / "galleries"
+BOARDS_DIR = DATA_DIR / "boards"
 DB_PATH = DATA_DIR / "art_ref.db"
 
 DEFAULT_API_BASE = "http://localhost:23333"
@@ -21,15 +23,51 @@ DEFAULT_MIN_FILE_SIZE = 10240
 DEFAULT_THUMBNAIL_SIZE = (300, 300)
 
 # Search backend
-SEARXNG_BASE_URL = os.environ.get("ARTREF_SEARXNG_URL", "")   # e.g. "http://localhost:8080"
-DEFAULT_SEARCH_BACKEND = os.environ.get("ARTREF_SEARCH_BACKEND", "auto")  # auto | searxng | duckduckgo
+SEARXNG_BASE_URL = os.environ.get("ARTREF_SEARXNG_URL", "")
+DEFAULT_SEARCH_BACKEND = os.environ.get("ARTREF_SEARCH_BACKEND", "auto")
 
 # Download backend
-DEFAULT_DOWNLOAD_BACKEND = os.environ.get("ARTREF_DOWNLOAD_BACKEND", "auto")  # auto | gallery-dl | httpx
+DEFAULT_DOWNLOAD_BACKEND = os.environ.get("ARTREF_DOWNLOAD_BACKEND", "auto")
 IMG2DATASET_FALLBACK = True
 
 # Vector store backend
-DEFAULT_VECTOR_BACKEND = os.environ.get("ARTREF_VECTOR_BACKEND", "faiss")  # faiss | lancedb
+DEFAULT_VECTOR_BACKEND = os.environ.get("ARTREF_VECTOR_BACKEND", "faiss")
+
+# Ranking weights for final_score computation
+RANKING_WEIGHTS = {
+    "relevance": 0.18,
+    "design_reference": 0.16,
+    "aesthetic": 0.14,
+    "composition": 0.10,
+    "lighting": 0.10,
+    "style_consistency": 0.14,
+    "usability": 0.08,
+    "uniqueness": 0.06,
+    "source_quality": 0.04,
+    "risk_penalty": 0.08,
+    "duplicate_penalty": 0.10,
+}
+
+# Status determination thresholds
+STATUS_RULES = {
+    "core": {"min_final_score": 0.82, "min_style_consistency": 0.70},
+    "curated": {"min_final_score": 0.68},
+    "supplement": {"min_final_score": 0.50},
+    "outlier": {"max_style_consistency": 0.40, "min_relevance": 0.60},
+    "rejected": {"min_relevance": 0.45, "min_design_reference": 0.35},
+    "duplicate": {"min_duplicate_penalty": 0.80},
+}
+
+# Board defaults
+DEFAULT_BOARD_TOP_K = {
+    "core_references": 8,
+    "section_key_images": 8,
+    "section_supporting": 16,
+    "anti_references": 8,
+}
+
+# Gallery images per track search
+IMAGES_PER_TRACK = 15
 
 VISION_PROMPT = """Analyze this image as an art reference. Return a JSON object with these fields:
 - "description": A detailed description of the image content (1-2 sentences)
