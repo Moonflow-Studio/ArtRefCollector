@@ -4,7 +4,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from config import DATA_DIR, SESSIONS_DIR
+from config import DATA_DIR, SESSIONS_DIR, BOARDS_DIR
 
 
 def ensure_dirs():
@@ -344,6 +344,112 @@ def cmd_gallery(args):
     print(json.dumps({"generated": len(results), "topics": results}, ensure_ascii=False))
 
 
+def cmd_parse(args):
+    """Parse a text setting into structured visual requirements."""
+    from analyze.setting_parser import parse_setting
+    from store.database import ImageDatabase
+
+    setting_text = args.setting
+    if args.file:
+        setting_text = Path(args.file).read_text(encoding="utf-8")
+
+    result = parse_setting(
+        setting_text=setting_text,
+        api_base=args.api_base,
+        model=args.model,
+        api_key=args.api_key,
+    )
+
+    # Create a board to hold this setting
+    board_id = f"board_{uuid.uuid4().hex[:8]}"
+    from models import Board, StyleProfile
+    board = Board(
+        id=board_id,
+        name=args.name or setting_text[:30],
+        setting_text=setting_text,
+        visual_goal_summary=", ".join(result.style_profile.mood + result.style_profile.color[:3]),
+        style_profile=result.style_profile,
+    )
+
+    # Save board + parse result
+    BOARDS_DIR.mkdir(parents=True, exist_ok=True)
+    parse_path = BOARDS_DIR / board_id / "parse_result.json"
+    parse_path.parent.mkdir(parents=True, exist_ok=True)
+    parse_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+
+    db = ImageDatabase()
+    db.save_board(board)
+    db.close()
+
+    output = {
+        "board_id": board_id,
+        "board_name": board.name,
+        "parse_result": result.model_dump(),
+        "parse_file": str(parse_path),
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+    if result.clarification_questions:
+        print("\n需要澄清的问题:", file=sys.stderr)
+        for q in result.clarification_questions:
+            print(f"  - {q}", file=sys.stderr)
+
+
+def cmd_plan(args):
+    """Generate Reference Tracks from a board's parsed setting."""
+    from analyze.reference_planner import plan_references
+    from store.database import ImageDatabase
+
+    db = ImageDatabase()
+    board = db.get_board(args.board)
+    if not board:
+        print(json.dumps({"error": f"Board {args.board} not found"}))
+        sys.exit(1)
+
+    # Load parse result if available
+    parse_path = BOARDS_DIR / args.board / "parse_result.json"
+    from models.schemas import SettingParseResult
+    if parse_path.exists():
+        parse_result = SettingParseResult.model_validate_json(parse_path.read_text(encoding="utf-8"))
+    else:
+        # Fallback: create minimal parse result from board
+        parse_result = SettingParseResult(
+            core_concepts=[board.name],
+            style_profile=board.style_profile,
+        )
+
+    tracks = plan_references(
+        parse_result=parse_result,
+        setting_text=board.setting_text,
+        api_base=args.api_base,
+        model=args.model,
+        api_key=args.api_key,
+    )
+
+    # Save tracks to board
+    board.reference_tracks = tracks
+    db.save_board(board)
+    db.close()
+
+    # Also save tracks file
+    tracks_path = BOARDS_DIR / args.board / "reference_tracks.json"
+    tracks_path.write_text(
+        json.dumps([t.model_dump() for t in tracks], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    output = {
+        "board_id": args.board,
+        "track_count": len(tracks),
+        "tracks": [t.model_dump() for t in tracks],
+        "tracks_file": str(tracks_path),
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+    total_queries = sum(len(t.search_queries) for t in tracks)
+    print(f"\n生成 {len(tracks)} 条参考线索，共 {total_queries} 个搜索查询", file=sys.stderr)
+
+
 def cmd_pipeline(args):
     ensure_dirs()
     sid = new_session()
@@ -494,6 +600,22 @@ def main():
     p.add_argument("--tags", nargs="*", default=None)
     p.add_argument("--min-score", type=float, default=None)
 
+    # parse
+    p = sub.add_parser("parse")
+    p.add_argument("setting", nargs="?", default="", help="Setting text (or use --file)")
+    p.add_argument("--file", default=None, help="Read setting from file")
+    p.add_argument("--name", default=None, help="Board name (default: first 30 chars of setting)")
+    p.add_argument("--api-base", default="http://localhost:23333")
+    p.add_argument("--api-key", default="")
+    p.add_argument("--model", default="zhipu:glm-4.6v")
+
+    # plan
+    p = sub.add_parser("plan")
+    p.add_argument("--board", required=True, help="Board ID to plan references for")
+    p.add_argument("--api-base", default="http://localhost:23333")
+    p.add_argument("--api-key", default="")
+    p.add_argument("--model", default="zhipu:glm-4.6v")
+
     # pipeline
     p = sub.add_parser("pipeline")
     p.add_argument("keywords")
@@ -522,6 +644,8 @@ def main():
         "metrics": cmd_metrics,
         "store": cmd_store,
         "gallery": cmd_gallery,
+        "parse": cmd_parse,
+        "plan": cmd_plan,
         "pipeline": cmd_pipeline,
     }
     commands[args.command](args)
