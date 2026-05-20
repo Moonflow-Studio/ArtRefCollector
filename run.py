@@ -10,8 +10,23 @@ from config import DATA_DIR, SESSIONS_DIR, BOARDS_DIR
 def ensure_dirs():
     for d in [DATA_DIR / "images", DATA_DIR / "thumbnails", SESSIONS_DIR,
               DATA_DIR / "faiss_index", DATA_DIR / "lancedb",
-              DATA_DIR / "galleries", DATA_DIR / "metrics"]:
+              DATA_DIR / "galleries", DATA_DIR / "metrics", BOARDS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
+
+
+def _sanitize_board_id(name: str) -> str:
+    """Create a filesystem-safe board ID from a name."""
+    import re
+    # Remove/replace characters unsafe for directory names
+    cleaned = name.strip()
+    cleaned = re.sub(r'[<>:"/\\|?*]', '_', cleaned)
+    cleaned = re.sub(r'\s+', '_', cleaned)
+    cleaned = re.sub(r'_+', '_', cleaned)
+    cleaned = cleaned.strip('_')
+    # Limit length
+    if len(cleaned) > 80:
+        cleaned = cleaned[:80].rstrip('_')
+    return cleaned or f"board_{uuid.uuid4().hex[:8]}"
 
 
 def new_session() -> str:
@@ -360,30 +375,42 @@ def cmd_parse(args):
         api_key=args.api_key,
     )
 
-    # Create a board to hold this setting
-    board_id = f"board_{uuid.uuid4().hex[:8]}"
-    from models import Board, StyleProfile
+    # Sanitize board_id: human-readable, filesystem-safe
+    board_name = args.name or setting_text[:30]
+    board_id = _sanitize_board_id(board_name)
+
+    from models import Board
+    board_dir = BOARDS_DIR / board_id
+    board_dir.mkdir(parents=True, exist_ok=True)
+    (board_dir / "images").mkdir(exist_ok=True)
+    (board_dir / "thumbnails").mkdir(exist_ok=True)
+
     board = Board(
         id=board_id,
-        name=args.name or setting_text[:30],
+        name=board_name,
+        base_dir=str(board_dir.resolve()),
         setting_text=setting_text,
         visual_goal_summary=", ".join(result.style_profile.mood + result.style_profile.color[:3]),
         style_profile=result.style_profile,
     )
 
-    # Save board + parse result
-    BOARDS_DIR.mkdir(parents=True, exist_ok=True)
-    parse_path = BOARDS_DIR / board_id / "parse_result.json"
-    parse_path.parent.mkdir(parents=True, exist_ok=True)
+    # Save parse result into board folder
+    parse_path = board_dir / "parse_result.json"
     parse_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
 
+    # Save board to DB
     db = ImageDatabase()
     db.save_board(board)
+    # Export _board.json (self-contained, relative paths)
+    board_json = db.export_board_json(board_id)
+    if board_json:
+        (board_dir / "_board.json").write_text(board_json, encoding="utf-8")
     db.close()
 
     output = {
         "board_id": board_id,
         "board_name": board.name,
+        "board_dir": str(board_dir),
         "parse_result": result.model_dump(),
         "parse_file": str(parse_path),
     }
@@ -407,7 +434,7 @@ def cmd_plan(args):
         sys.exit(1)
 
     # Load parse result if available
-    parse_path = BOARDS_DIR / args.board / "parse_result.json"
+    parse_path = Path(board.base_dir) / "parse_result.json"
     from models.schemas import SettingParseResult
     if parse_path.exists():
         parse_result = SettingParseResult.model_validate_json(parse_path.read_text(encoding="utf-8"))
@@ -429,14 +456,19 @@ def cmd_plan(args):
     # Save tracks to board
     board.reference_tracks = tracks
     db.save_board(board)
-    db.close()
 
-    # Also save tracks file
-    tracks_path = BOARDS_DIR / args.board / "reference_tracks.json"
+    # Save tracks file into board folder
+    tracks_path = Path(board.base_dir) / "reference_tracks.json"
     tracks_path.write_text(
         json.dumps([t.model_dump() for t in tracks], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+    # Update _board.json
+    board_json = db.export_board_json(args.board)
+    if board_json:
+        (Path(board.base_dir) / "_board.json").write_text(board_json, encoding="utf-8")
+    db.close()
 
     output = {
         "board_id": args.board,
@@ -448,6 +480,26 @@ def cmd_plan(args):
 
     total_queries = sum(len(t.search_queries) for t in tracks)
     print(f"\n生成 {len(tracks)} 条参考线索，共 {total_queries} 个搜索查询", file=sys.stderr)
+
+
+def cmd_analyze_board(args):
+    """Analyze board images with board-aware VLM analysis."""
+    from analyze.board_analyzer import analyze_board_images
+
+    analyzed = analyze_board_images(
+        board_id=args.board,
+        api_base=args.api_base,
+        model=args.model,
+        api_key=args.api_key,
+        status_filter=args.status or "candidate",
+    )
+
+    output = {
+        "board_id": args.board,
+        "analyzed": len(analyzed),
+        "model": args.model,
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
 
 
 def cmd_pipeline(args):
@@ -616,6 +668,14 @@ def main():
     p.add_argument("--api-key", default="")
     p.add_argument("--model", default="zhipu:glm-4.6v")
 
+    # analyze-board
+    p = sub.add_parser("analyze-board")
+    p.add_argument("--board", required=True, help="Board ID")
+    p.add_argument("--api-base", default="http://localhost:23333")
+    p.add_argument("--api-key", default="")
+    p.add_argument("--model", default="zhipu:glm-4.6v")
+    p.add_argument("--status", default="candidate", help="Filter images by status")
+
     # pipeline
     p = sub.add_parser("pipeline")
     p.add_argument("keywords")
@@ -646,6 +706,7 @@ def main():
         "gallery": cmd_gallery,
         "parse": cmd_parse,
         "plan": cmd_plan,
+        "analyze-board": cmd_analyze_board,
         "pipeline": cmd_pipeline,
     }
     commands[args.command](args)

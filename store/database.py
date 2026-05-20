@@ -53,7 +53,7 @@ def _json_loads_dict(val: str | None) -> dict:
 
 
 class ImageDatabase:
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path or str(DB_PATH)
@@ -74,6 +74,7 @@ class ImageDatabase:
             CREATE TABLE IF NOT EXISTS boards (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                base_dir TEXT DEFAULT '',
                 setting_text TEXT DEFAULT '',
                 visual_goal_summary TEXT DEFAULT '',
                 style_profile TEXT DEFAULT '{}',
@@ -214,12 +215,13 @@ class ImageDatabase:
     def save_board(self, board: Board) -> None:
         self._conn.execute("""
             INSERT OR REPLACE INTO boards
-                (id, name, setting_text, visual_goal_summary, style_profile,
+                (id, name, base_dir, setting_text, visual_goal_summary, style_profile,
                  global_missing_needs, next_search_suggestions, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             board.id,
             board.name,
+            board.base_dir,
             board.setting_text,
             board.visual_goal_summary,
             board.style_profile.model_dump_json(),
@@ -228,10 +230,8 @@ class ImageDatabase:
             board.created_at,
             datetime.now().isoformat(),
         ))
-        # Save tracks
         for track in board.reference_tracks:
             self.save_track(track, board.id)
-        # Save sections
         for section in board.sections:
             self.save_section(board.id, section)
         self._conn.commit()
@@ -245,9 +245,11 @@ class ImageDatabase:
         tracks = self.get_tracks(board_id)
         images = self.get_board_images(board_id)
         sections = self.get_sections(board_id)
-        return Board(
+        base_dir = row["base_dir"] or ""
+        board = Board(
             id=row["id"],
             name=row["name"],
+            base_dir=base_dir,
             setting_text=row["setting_text"],
             visual_goal_summary=row["visual_goal_summary"],
             style_profile=StyleProfile.model_validate_json(row["style_profile"]),
@@ -256,11 +258,18 @@ class ImageDatabase:
             sections=sections,
             global_missing_needs=_json_loads_list(row["global_missing_needs"]),
             next_search_suggestions=_json_loads_list(row["next_search_suggestions"]),
-            core_references=[],  # Computed dynamically
-            anti_references=[],  # Computed dynamically
+            core_references=[],
+            anti_references=[],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+        # Resolve relative image paths to absolute using base_dir
+        for img in board.images:
+            if base_dir and img.local_path and not Path(img.local_path).is_absolute():
+                img.local_path = str(Path(base_dir) / img.local_path)
+            if base_dir and img.thumb_path and not Path(img.thumb_path).is_absolute():
+                img.thumb_path = str(Path(base_dir) / img.thumb_path)
+        return board
 
     def list_boards(self) -> list[dict]:
         rows = self._conn.execute("""
@@ -278,6 +287,28 @@ class ImageDatabase:
     def delete_board(self, board_id: str) -> None:
         self._conn.execute("DELETE FROM boards WHERE id = ?", (board_id,))
         self._conn.commit()
+
+    def update_board_dir(self, board_id: str, new_base_dir: str) -> None:
+        """Update board's base_dir after the folder is moved."""
+        self._conn.execute(
+            "UPDATE boards SET base_dir = ?, updated_at = ? WHERE id = ?",
+            (new_base_dir, datetime.now().isoformat(), board_id),
+        )
+        self._conn.commit()
+
+    def export_board_json(self, board_id: str) -> str | None:
+        """Export board as self-contained JSON with relative paths for _board.json."""
+        board = self.get_board(board_id)
+        if not board:
+            return None
+        export = board.model_dump()
+        # Convert image paths to relative
+        for img in export.get("images", []):
+            img["local_path"] = board.make_relative(img.get("local_path", ""))
+            img["thumb_path"] = board.make_relative(img.get("thumb_path", ""))
+        # Remove base_dir from export (it's environment-specific)
+        export.pop("base_dir", None)
+        return json.dumps(export, ensure_ascii=False, indent=2)
 
     # ------------------------------------------------------------------
     # Reference Track CRUD

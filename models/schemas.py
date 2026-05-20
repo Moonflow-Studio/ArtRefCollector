@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -205,8 +206,9 @@ class BoardSection(BaseModel):
 # ---------------------------------------------------------------------------
 
 class Board(BaseModel):
-    id: str = ""
+    id: str = ""  # Human-readable name, used as folder name
     name: str
+    base_dir: str = ""  # Absolute path to the board folder
     setting_text: str = ""
     visual_goal_summary: str = ""
     style_profile: StyleProfile = Field(default_factory=StyleProfile)
@@ -219,6 +221,31 @@ class Board(BaseModel):
     next_search_suggestions: list[str] = []
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+    def get_images_dir(self) -> Path:
+        """Absolute path to board's images/ directory."""
+        from pathlib import Path
+        return Path(self.base_dir) / "images" if self.base_dir else Path("")
+
+    def get_thumbs_dir(self) -> Path:
+        """Absolute path to board's thumbnails/ directory."""
+        from pathlib import Path
+        return Path(self.base_dir) / "thumbnails" if self.base_dir else Path("")
+
+    def resolve_image_path(self, relative_path: str) -> str:
+        """Resolve a relative image path to absolute using base_dir."""
+        if not self.base_dir:
+            return relative_path
+        return str(Path(self.base_dir) / relative_path)
+
+    def make_relative(self, abs_path: str) -> str:
+        """Convert an absolute path under base_dir to relative."""
+        if not self.base_dir or not abs_path:
+            return abs_path
+        try:
+            return str(Path(abs_path).relative_to(self.base_dir))
+        except ValueError:
+            return abs_path
 
 
 # ---------------------------------------------------------------------------
