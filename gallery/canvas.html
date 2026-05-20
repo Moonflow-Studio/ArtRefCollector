@@ -60,17 +60,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 
 /* ── Board Section ── */
 .board-container { position: absolute; }
-.board-header {
-  padding: 20px 24px; background: linear-gradient(135deg, rgba(22,22,22,0.95), rgba(40,20,30,0.9));
-  border-radius: 16px; border: 1px solid var(--border); margin-bottom: 16px;
-}
-.board-header h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
-.board-header .goal { font-size: 13px; color: var(--text-dim); line-height: 1.5; max-width: 800px; }
 .board-core { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
 .board-core-label { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
 .section-block {
   background: rgba(22,22,22,0.6); border-radius: 12px; border: 1px solid var(--border);
-  padding: 16px; margin-bottom: 16px; min-width: 400px;
+  padding: 16px;
 }
 .section-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -83,7 +77,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   display: flex; gap: 8px; flex-wrap: wrap;
 }
 .section-grid .img-card {
-  width: 140px; flex-shrink: 0; cursor: grab;
+  width: 120px; flex-shrink: 0; cursor: grab;
 }
 .section-grid .img-card.dragging { opacity: 0.4; }
 .section-grid .img-card.drag-over {
@@ -187,6 +181,23 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 .axis-select-group select:focus { border-color: var(--accent); }
 .axis-info { font-size: 11px; color: #555; margin-top: 4px; line-height: 1.4; }
 
+/* ── Board info panel ── */
+#boardInfoPanel {
+  position: fixed; top: 16px; left: 252px; z-index: 1000;
+  background: rgba(22,22,22,0.95); backdrop-filter: blur(12px);
+  border-radius: 12px; border: 1px solid var(--border);
+  padding: 16px; width: 340px; display: none;
+  max-height: calc(100vh - 100px); overflow-y: auto;
+}
+#boardInfoPanel.visible { display: block; }
+#boardInfoPanel h3 { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+#boardInfoPanel .info-name { font-size: 16px; font-weight: 700; margin-bottom: 6px; color: var(--accent); }
+#boardInfoPanel .info-goal { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin-bottom: 10px; }
+#boardInfoPanel .info-stats { font-size: 11px; color: #888; margin-bottom: 10px; }
+#boardInfoPanel .info-setting-toggle { font-size: 11px; color: var(--accent); cursor: pointer; margin-bottom: 6px; }
+#boardInfoPanel .info-setting-toggle:hover { text-decoration: underline; }
+#boardInfoPanel .info-setting { font-size: 11px; color: #666; line-height: 1.5; max-height: 300px; overflow-y: auto; white-space: pre-wrap; }
+
 /* ── Board selector modal ── */
 #boardModal {
   display: none; position: fixed; inset: 0; z-index: 4000;
@@ -272,6 +283,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   <div id="axesPanelContent"></div>
 </div>
 
+<div id="boardInfoPanel">
+  <h3>Board Info</h3>
+  <div id="boardInfoContent"></div>
+</div>
+
 <div id="toolbar">
   <button id="btnZoomOut">-</button>
   <span id="zoomLabel">100%</span>
@@ -285,6 +301,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   <div class="sep"></div>
   <button id="btnAxes">Axes</button>
   <button id="btnMinimap">Map</button>
+  <button id="btnBoardInfo" style="display:none">Info</button>
 </div>
 
 <div id="minimap"><canvas id="minimapCanvas"></canvas></div>
@@ -327,7 +344,7 @@ let collections = [];
 let allImages = [];
 let view = { x: 0, y: 0, zoom: 1 };
 let isPanning = false, panStart = {}, viewStart = {};
-let minimapVisible = false, axesVisible = false;
+let minimapVisible = false, axesVisible = false, boardInfoVisible = false;
 let layoutMode = 'grid';
 let selectedX = 'brightness', selectedY = 'saturation';
 let scatterTitleX = null, scatterTitleY = null;
@@ -483,16 +500,25 @@ document.getElementById('boardModalClose').addEventListener('click', () => {
 });
 
 function loadBoardData(data, boardId) {
-  // Build image resolver — use API URLs if available, else local paths
+  const resolvedBoardId = boardId || data.id;
+
+  // Build image resolver — try API URLs first, then construct from board ID
   const resolver = (img) => {
-    if (img.api_url) return API_BASE + img.api_url;
-    if (img.api_thumb_url) return API_BASE + img.api_thumb_url;
-    if (img.local_path) return img.local_path;
+    // 1. Use pre-built API URL from server response
+    if (img.api_url) return API_BASE + encodeURI(img.api_url);
+    if (img.api_thumb_url) return API_BASE + encodeURI(img.api_thumb_url);
+    // 2. Construct API URL from board ID + filename (works for file-import when server is available)
+    if (apiAvailable && resolvedBoardId && img.local_path) {
+      const fname = img.local_path.replace(/\\/g, '/').split('/').pop();
+      if (fname) return API_BASE + '/api/boards/' + encodeURIComponent(resolvedBoardId) + '/image/' + fname;
+    }
+    // 3. Relative local path
+    if (img.local_path && !/^[A-Z]:/i.test(img.local_path)) return img.local_path;
     return '';
   };
 
   currentBoard = {
-    id: boardId || data.id,
+    id: resolvedBoardId,
     name: data.name || data.id,
     setting_text: data.setting_text || '',
     visual_goal_summary: data.visual_goal_summary || '',
@@ -508,6 +534,10 @@ function loadBoardData(data, boardId) {
   updateModeButtons();
   emptyState.classList.add('hidden');
   renderBoard();
+  // Auto-show board info panel
+  boardInfoVisible = true;
+  document.getElementById('boardInfoPanel').classList.add('visible');
+  document.getElementById('btnBoardInfo').classList.add('active');
   fitAll();
 }
 
@@ -620,17 +650,12 @@ function renderBoard() {
   const b = currentBoard;
   const container = document.createElement('div');
   container.className = 'board-container';
-  container.style.cssText = 'position:absolute;top:0;left:0;padding:24px;min-width:800px;';
+  container.style.cssText = 'position:absolute;top:0;left:0;padding:24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:16px;width:2400px;';
 
-  // Header
-  const header = document.createElement('div');
-  header.className = 'board-header';
-  header.innerHTML = `<h1>${esc(b.name)}</h1>${b.visual_goal_summary ? `<div class="goal">${esc(b.visual_goal_summary)}</div>` : ''}`;
-  container.appendChild(header);
-
-  // Core references
+  // Core references (span all columns)
   if (b.core_references && b.core_references.length) {
     const coreDiv = document.createElement('div');
+    coreDiv.style.gridColumn = '1 / -1';
     coreDiv.innerHTML = `<div class="board-core-label">Core References</div>`;
     const coreGrid = document.createElement('div');
     coreGrid.className = 'board-core';
@@ -704,6 +729,7 @@ function renderBoard() {
   });
 
   world.appendChild(container);
+  updateBoardInfoPanel();
 }
 
 function createBoardCard(img, board) {
@@ -720,6 +746,46 @@ function createBoardCard(img, board) {
   });
   return card;
 }
+
+function updateBoardInfoPanel() {
+  const content = document.getElementById('boardInfoContent');
+  if (!content) return;
+  if (!currentBoard) {
+    content.innerHTML = '<div style="color:#555;font-size:12px;text-align:center;padding:16px 0">No board loaded</div>';
+    return;
+  }
+  const b = currentBoard;
+  const imgCount = b.images ? b.images.length : 0;
+  const sectionCount = b.sections ? b.sections.length : 0;
+  const sectionsWithImgs = b.sections ? b.sections.filter(s => (s.key_images||[]).length + (s.supporting_images||[]).length > 0).length : 0;
+  content.innerHTML =
+    `<div class="info-name">${esc(b.name)}</div>` +
+    (b.visual_goal_summary ? `<div class="info-goal">${esc(b.visual_goal_summary)}</div>` : '') +
+    `<div class="info-stats">${imgCount} images / ${sectionsWithImgs} active sections (${sectionCount} total)</div>` +
+    (b.setting_text ? `<div class="info-setting-toggle" id="toggleSetting">Show setting text</div><div class="info-setting" id="settingText" style="display:none">${esc(b.setting_text)}</div>` : '');
+  const toggle = document.getElementById('toggleSetting');
+  const settingDiv = document.getElementById('settingText');
+  if (toggle && settingDiv) {
+    toggle.addEventListener('click', () => {
+      const vis = settingDiv.style.display !== 'none';
+      settingDiv.style.display = vis ? 'none' : 'block';
+      toggle.textContent = vis ? 'Show setting text' : 'Hide setting text';
+    });
+  }
+}
+
+// Global img error handler — show placeholder on load failure
+document.addEventListener('error', function(e) {
+  if (e.target.tagName === 'IMG' && !e.target.dataset.fallback) {
+    e.target.dataset.fallback = '1';
+    e.target.src = 'data:image/svg+xml,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" fill="%23111">' +
+      '<rect width="120" height="80" rx="4"/>' +
+      '<text x="60" y="44" text-anchor="middle" fill="%23555" font-size="10">unavailable</text></svg>'
+    );
+    e.target.style.minHeight = '80px';
+  }
+}, true);
 
 function findBoardImage(imageId) {
   if (!currentBoard) return null;
@@ -960,8 +1026,10 @@ function fitAll() {
   if (layoutMode === 'board') {
     const el = world.querySelector('.board-container');
     if (el) {
-      const r = el.getBoundingClientRect();
-      fitRect(-40, -40, r.width + 80, r.height + 80);
+      // Use offsetWidth/Height — these reflect layout size before CSS transforms
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      fitRect(-40, -40, w + 80, h + 80);
     }
     return;
   }
@@ -1010,6 +1078,7 @@ function updateModeButtons() {
   document.getElementById('btnGrid').classList.toggle('active', layoutMode==='grid');
   document.getElementById('btnScatter').classList.toggle('active', layoutMode==='scatter');
   document.getElementById('btnBoard').classList.toggle('active', layoutMode==='board');
+  document.getElementById('btnBoardInfo').style.display = currentBoard ? '' : 'none';
 }
 document.getElementById('btnGrid').addEventListener('click', () => { layoutMode='grid'; updateModeButtons(); render(); });
 document.getElementById('btnScatter').addEventListener('click', () => {
@@ -1028,6 +1097,11 @@ document.getElementById('btnZoomOut').addEventListener('click', () => { const cx
 document.getElementById('btnFit').addEventListener('click', fitAll);
 document.getElementById('btnAxes').addEventListener('click', () => { axesVisible=!axesVisible; axesPanel.classList.toggle('visible',axesVisible); });
 document.getElementById('btnMinimap').addEventListener('click', () => { minimapVisible=!minimapVisible; minimap.classList.toggle('visible',minimapVisible); if(minimapVisible) drawMinimap(); });
+document.getElementById('btnBoardInfo').addEventListener('click', () => {
+  boardInfoVisible = !boardInfoVisible;
+  document.getElementById('boardInfoPanel').classList.toggle('visible', boardInfoVisible);
+  document.getElementById('btnBoardInfo').classList.toggle('active', boardInfoVisible);
+});
 
 updateModeButtons();
 </script>

@@ -55,16 +55,16 @@ def _order_images(images: list[KeyImageRef], user_order: list[str]) -> list[KeyI
 
 
 def _group_images_by_category(images: list[BoardImage]) -> dict[str, list[BoardImage]]:
-    """Group images by their primary functional category."""
+    """Group images by their primary (highest-scored) functional category."""
     groups: dict[str, list[BoardImage]] = defaultdict(list)
     for img in images:
         if img.status in ("rejected", "duplicate"):
             continue
-        for cat in img.categories:
-            groups[cat.category].append(img)
-        # Also add to recommended sections
-        for section in (img.analysis.recommended_board_section if img.analysis else []):
-            if img not in groups[section]:
+        if img.categories:
+            best_cat = max(img.categories, key=lambda c: c.score)
+            groups[best_cat.category].append(img)
+        elif img.analysis and img.analysis.recommended_board_section:
+            for section in img.analysis.recommended_board_section:
                 groups[section].append(img)
     return dict(groups)
 

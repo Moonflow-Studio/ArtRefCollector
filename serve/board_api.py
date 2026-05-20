@@ -42,7 +42,10 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except ConnectionError:
+            pass  # Client disconnected, ignore
 
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0))
