@@ -245,14 +245,13 @@ def cmd_store(args):
 
 
 def cmd_gallery(args):
+    """Generate _collection.json config in each topic's image folder."""
     ensure_dirs()
     from store.database import ImageDatabase
 
     db = ImageDatabase()
-
-    # Support multiple topics for combined canvas
     topics = args.topic if isinstance(args.topic, list) else [args.topic]
-    collections_config = []
+    results = []
 
     for topic in topics:
         images = db.get_images_by_collection(topic, tags=args.tags, min_score=args.min_score)
@@ -260,10 +259,15 @@ def cmd_gallery(args):
             print(json.dumps({"error": f"No images found for topic '{topic}'"}), file=sys.stderr)
             continue
 
+        topic_dir = DATA_DIR / "images" / topic
+        if not topic_dir.exists():
+            print(json.dumps({"error": f"Image folder not found: {topic_dir}"}), file=sys.stderr)
+            continue
+
         col_images = []
         for img in images:
             entry = {
-                "path": f"../images/{topic}/{img['filename']}",
+                "path": img["filename"],  # bare filename, same folder as _collection.json
                 "description": img.get("description", ""),
                 "tags": [t.strip() for t in img.get("tags", "").split(",") if t.strip()] if img.get("tags") else [],
                 "score": img.get("quality_score", 0),
@@ -271,10 +275,9 @@ def cmd_gallery(args):
                 "style": img.get("style", ""),
             }
 
-            # Include metrics if per-image JSON exists
+            # Embed metrics from per-image JSON
             metrics_dir = DATA_DIR / "metrics"
             img_stem = Path(img.get("filename", "")).stem
-            # Search across all session dirs for matching metrics
             for session_dir in metrics_dir.iterdir():
                 mf = session_dir / f"{img_stem}.json"
                 if mf.exists():
@@ -290,37 +293,24 @@ def cmd_gallery(args):
 
             col_images.append(entry)
 
-        idx = len(collections_config)
+        idx = len(results)
         colors = ["#4a90d9", "#d4a03c", "#3cb878", "#c75d5d", "#7e6db5", "#5db5a3"]
-        collections_config.append({
+        col_config = {
             "id": topic,
             "name": topic.replace("_", " "),
             "color": colors[idx % len(colors)],
-            "position": {"x": idx * 1500, "y": 0},
             "layout": {"type": "grid", "columns": 5, "cellSize": 280, "gap": 10, "padding": 20},
             "images": col_images,
-        })
+        }
 
-    if not collections_config:
-        print(json.dumps({"error": "No images found"}))
-        sys.exit(1)
+        # Write _collection.json into the topic image folder
+        config_path = topic_dir / "_collection.json"
+        config_path.write_text(json.dumps(col_config, ensure_ascii=False, indent=2), encoding="utf-8")
+        with_metrics = sum(1 for img in col_images if img.get("visual_metrics"))
+        results.append({"topic": topic, "path": str(config_path), "images": len(col_images), "with_metrics": with_metrics})
+        print(json.dumps(results[-1], ensure_ascii=False))
 
-    # Write canvas config
-    canvas_config = {
-        "title": " · ".join(topics),
-        "collections": collections_config,
-    }
-    config_path = DATA_DIR / "galleries" / "canvas-config.json"
-    config_path.write_text(json.dumps(canvas_config, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    total = sum(len(c["images"]) for c in collections_config)
-    with_metrics = sum(1 for c in collections_config for img in c["images"] if img.get("visual_metrics"))
-    print(json.dumps({
-        "config_path": str(config_path),
-        "image_count": total,
-        "with_metrics": with_metrics,
-        "collections": len(collections_config),
-    }, ensure_ascii=False))
+    print(json.dumps({"generated": len(results), "topics": results}, ensure_ascii=False))
 
 
 def cmd_pipeline(args):
