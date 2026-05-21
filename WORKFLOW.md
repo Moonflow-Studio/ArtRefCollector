@@ -69,6 +69,11 @@ uv run python run.py search "<关键词>" --max 30
 
 **产出**：创建搜索会话，保存到 `data/sessions/<session_id>.json`，包含每张图片的 URL、标题、来源等信息。
 
+**依赖**：
+- `duckduckgo-search` — Bing 图片搜索（主力）
+- `httpx` — HTTP 客户端（用于 SearXNG 备用搜索引擎）
+- 备用方案：自建 [SearXNG](https://github.com/searxng/searxng) 实例，通过 `config.py` 配置
+
 **提示**：
 - 使用英文关键词效果更好
 - 可以用 `--type photo` 过滤照片类结果
@@ -85,6 +90,11 @@ uv run python run.py download --session <session_id>
 **做什么**：将搜索会话中的图片 URL 批量下载到本地，计算 SHA256 和 pHash。
 
 **产出**：图片文件保存到 `data/sessions/<session_id>/` 目录。每张图片生成缩略图。
+
+**依赖**：
+- `httpx` — 异步 HTTP 下载（主力）
+- `Pillow` — 缩略图生成
+- 备用方案：`gallery-dl`（站点专用下载）、`img2dataset`（批量重试）
 
 ---
 
@@ -105,6 +115,12 @@ uv run python run.py dedup --session <session_id> [--clip] [--threshold 0.92]
 - `--threshold`：CLIP 相似度阈值（默认 0.92，越高越严格）
 
 **产出**：在会话数据中标记重复图片，不删除文件。
+
+**依赖**：
+- `hashlib`（stdlib）— SHA256 精确去重
+- `imagehash` + `Pillow` — pHash 感知哈希去重
+- `open-clip-torch` + `torch`（~2.6GB）— CLIP 语义去重（可选，加 `--clip` 启用）
+- 备用方案：仅使用 pHash（不加 `--clip`），精度稍低但无需下载大模型
 
 ---
 
@@ -135,6 +151,13 @@ uv run python run.py store --session <session_id> --board "<board_id>"
 
 **提示**：Board ID 建议使用可读名称如 `S3_屏蔽室`、`角色_机甲设计`。
 
+**依赖**：
+- `sqlite3`（stdlib）— 元数据库
+- `pydantic` — 数据模型校验
+- `Pillow` — 缩略图生成（Board 模式）
+- `faiss-cpu` — 向量索引（主用）
+- 备用方案：`lancedb`（替代向量后端，通过 `config.py` 切换）
+
 ---
 
 ### Step 5: parse — 设定解析
@@ -154,6 +177,11 @@ uv run python run.py parse --board <board_id> --name "S3 屏蔽室" --file setti
 ```
 
 **做什么**：将自由文本的场景设定通过 LLM 解析为结构化视觉需求。需要 Cherry Studio。
+
+**依赖**：
+- `httpx` — 调用 Cherry Studio API Server（OpenAI 兼容接口）
+- `pydantic` — 解析结果结构化（`SettingParseResult`, `StyleProfile`）
+- LLM 模型：通过 Cherry Studio 调用，默认 `zhipu:glm-4.6v`
 
 **LLM 的工作**：调用 `analyze/setting_parser.py`，将设定文本发给 LLM，要求其输出结构化 JSON：
 
@@ -229,6 +257,11 @@ uv run python run.py plan --board <board_id>
 ```
 
 **做什么**：根据 parse 步骤的结构化视觉需求，通过 LLM 生成多条搜索轨道（Reference Track）。需要 Cherry Studio。
+
+**依赖**：
+- `httpx` — 调用 Cherry Studio API Server
+- `pydantic` — 轨道数据结构化（`ReferenceTrack`）
+- LLM 模型：通过 Cherry Studio 调用
 
 **LLM 的工作**：调用 `analyze/reference_planner.py`，将 parse 结果发给 LLM，要求其生成可执行的搜索计划。
 
@@ -374,6 +407,12 @@ uv run python run.py analyze-board --board <board_id>
 
 **产出**：每张图片的 `visual_metrics`、`curation_scores`、`analysis` 写入数据库。
 
+**依赖**：
+- `httpx` — 调用 VLM（Cherry Studio API Server）
+- `Pillow` + `numpy` + `scipy` — 像素级视觉指标计算（brightness, saturation, warmth 等）
+- `pydantic` — 分析结果结构化
+- `tqdm` — 进度条
+
 ---
 
 ### Step 8: rank — 排序分级
@@ -383,6 +422,12 @@ uv run python run.py rank --board <board_id>
 ```
 
 **做什么**：三阶段去重 + 加权评分 + 自动分级。不需要 Cherry Studio。
+
+**依赖**：
+- `hashlib`（stdlib）— SHA256 精确去重
+- `imagehash` + `Pillow` — pHash 感知哈希去重
+- `open-clip-torch` + `torch` — CLIP 语义去重（可选）
+- `numpy` — 分数计算
 
 1. **三阶段去重**：
    - SHA256 精确去重（标记 penalty = 1.0）
@@ -417,6 +462,11 @@ uv run python run.py compose --board <board_id> --model zhipu:glm-4.6v
 ```
 
 **做什么**：将图片按功能分类组织为结构化画板。
+
+**依赖**：
+- `httpx` — 调用 VLM 生成分区摘要（可选，加 `--model` 启用）
+- `pydantic` — 编排数据结构化
+- `tqdm` — 进度条
 
 1. **核心参考选取**：从所有图片中选出 top-N 高分图片作为核心参考
 2. **功能分区**：将图片分配到 12 个功能分类（建筑、氛围、材质、色彩、构图等）
