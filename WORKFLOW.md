@@ -4,6 +4,48 @@
 
 ---
 
+## 操作流程速览
+
+整个 Board 工作流围绕一个核心循环：**给 AI 设定文本 → 获得结构化指导 → 收集图片 → AI 评估匹配度 → 用户纠正 → AI 学习偏好**。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. 你给 AI → 场景设定文本                                    │
+│    AI 给你 → 结构化视觉需求 + 搜索关键词 + 各维度中心值        │
+│    命令: parse → plan → derive-centers                        │
+├─────────────────────────────────────────────────────────────┤
+│ 2. 你给 AI → 搜索关键词（来自 plan 产出）                     │
+│    AI 搜集 → 原始图片结果                                     │
+│    命令: search → download → dedup → store --board            │
+├─────────────────────────────────────────────────────────────┤
+│ 3. 你给 AI → 图片 + 设定文本                                  │
+│    AI 给你 → 每张图片的感知维度值 + 像素指标 + 相关性评分       │
+│    命令: analyze-board                                        │
+├─────────────────────────────────────────────────────────────┤
+│ 4. AI 自动 → 根据中心值计算每张图的匹配度，排序分级            │
+│    你获得 → 自动分类的参考板（核心/精选/补充/排除）             │
+│    命令: rank → compose                                       │
+├─────────────────────────────────────────────────────────────┤
+│ 5. 你在查看器中 → 拖拽调整图片顺序                            │
+│    命令: serve + 浏览器操作                                    │
+├─────────────────────────────────────────────────────────────┤
+│ 6. 你给 AI → 调整后的排序                                     │
+│    AI 给你 → 新的中心值 + 评分权重（学习你的偏好）             │
+│    命令: feedback-centers                                     │
+├─────────────────────────────────────────────────────────────┤
+│ 7. 回到步骤 2，用新中心值指导后续搜索和筛选                    │
+│    新收集的图片自动按偏好排序                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**关键概念**：
+
+- **中心值**：AI 从设定文本推导出的"理想参考图"在各感知维度上的值（如"冷寂氛围"→ 色温中心值 ≈ 0.35）。图片离中心值越近，参考性越强。
+- **感知维度**：15 个 AI 判断的语义轴（景别、风格化、情绪强度、色温氛围、工业感、破败度等），每个 0-1 值。
+- **反馈闭环**：你拖拽排序 → AI 从排序中学习你的偏好 → 更新中心值 → 后续搜索筛选更精准。
+
+---
+
 ## 快速参考
 
 ### Collection 工作流（快速收集 + 浏览）
@@ -380,19 +422,16 @@ uv run python run.py analyze-board --board <board_id>
    - `is_relevant`（bool）：是否推荐保留
    - `final_recommendation`：`core` / `reference` / `supplement` / `reject`
 
-2. **评选分数**（8 维，均为 0-1）：
-   - `design_reference_score`：作为设计参考的价值
-   - `aesthetic_score`：美观程度
-   - `composition_score`：构图质量
-   - `lighting_score`：光照质量
-   - `style_consistency_score`：与设定风格的一致性
-   - `uniqueness_score`：独特性（避免千篇一律）
-   - `usability_score`：可操作性（能否直接用于设计）
-   - `risk_score`：风险度（是否可能引入不想要的方向）
+2. **感知维度**（15 维，均为 0-1，AI 判断）：
+   - 空间：shot_scale（景别）、spatial_scale（空间尺度）、openness（开放感）
+   - 风格：style（写实→风格化）、ornateness（朴素→华丽）、orderliness（秩序感）
+   - 情感：emotion_intensity（情绪强度）、warmth（色温氛围）
+   - 材质：material_roughness（材质粗度）、decay（破败度）
+   - 主题：era_feel（时代感）、industrialness（工业感）、religiousness（宗教感）、fantasy_level（奇幻）、sci_fi_level（科幻）
 
-3. **视觉指标**（15 维）：
-   - 像素自动计算：brightness, saturation, warmth, contrast, color_complexity, detail_density
-   - VLM 评分：shot_scale, openness, monumentality, religiousness, industrialness, decay, orderliness, fantasy_level, sci_fi_level
+3. **视觉指标**（12 维，像素自动计算，确定性）：
+   - brightness, saturation, color_temperature, dominant_hue, contrast, color_complexity
+   - edge_density, texture_complexity, composition_x, composition_y, spatial_openness, human_ratio
 
 4. **功能分类建议**：
    - 根据图片内容自动分配到功能分类（建筑/氛围/材质/色彩/构图等）
@@ -400,7 +439,7 @@ uv run python run.py analyze-board --board <board_id>
 
 5. **文字描述**：视觉摘要、可用元素、风格标签、风险提示
 
-**筛选如何生效**：analyze-board 的产出供下一步 rank 使用。rank 步骤根据 `relevance_score` 和 `design_reference_score` 的阈值自动排除不相关图片，根据综合评分自动分级（核心/精选/补充/排除）。用户无需手动筛选每张图片。
+**筛选如何生效**：analyze-board 的产出供下一步 rank 使用。rank 步骤根据中心值距离评分自动排序：每张图片的感知维度值与 AI 推导的中心值越接近，匹配度越高。图片按匹配度自动分级（核心/精选/补充/排除）。用户无需手动筛选每张图片。
 
 **参数**：
 - `--status`：只分析指定状态的图片（默认 `candidate`，即只分析未分析过的）
@@ -421,7 +460,7 @@ uv run python run.py analyze-board --board <board_id>
 uv run python run.py rank --board <board_id>
 ```
 
-**做什么**：三阶段去重 + 加权评分 + 自动分级。不需要 Cherry Studio。
+**做什么**：三阶段去重 + 中心值距离评分 + 自动分级。不需要 Cherry Studio。
 
 **依赖**：
 - `hashlib`（stdlib）— SHA256 精确去重
@@ -429,22 +468,25 @@ uv run python run.py rank --board <board_id>
 - `open-clip-torch` + `torch` — CLIP 语义去重（可选）
 - `numpy` — 分数计算
 
-1. **三阶段去重**：
+1. **中心值推导**（如尚未推导）：自动调用 `derive-centers` 从设定文本推导各维度的中心值
+
+2. **三阶段去重**：
    - SHA256 精确去重（标记 penalty = 1.0）
    - pHash 感知哈希去重（标记 penalty = 0.85）
    - CLIP 语义去重（标记 penalty = 相似度值）
 
-2. **加权评分**：综合 9 个正向维度和 2 个惩罚维度计算 `final_score`（0-1）：
+3. **距离评分**：每张图片的感知维度值与中心值比较，用高斯衰减计算匹配度（0-1）：
    ```
-   final_score = Σ(权重_i × 分数_i) - Σ(惩罚权重_j × 惩罚值_j)
+   dimension_score = exp(-(distance / tolerance)²)
+   final = 0.4 × relevance + 0.6 × weighted_avg(dimension_scores) - penalties
    ```
 
-3. **自动分级**：按 `final_score` 和关键子分分配状态：
-   - **核心**：≥ 0.82 且 风格一致 ≥ 0.70
-   - **精选**：≥ 0.68
-   - **补充**：≥ 0.50
-   - **异常**：风格偏离但相关
-   - **排除**：不相关或低质量
+4. **自动分级**：按匹配度分配状态：
+   - **核心**：≥ 0.85 且 相关性 ≥ 0.75
+   - **精选**：≥ 0.70
+   - **补充**：≥ 0.55
+   - **异常**：匹配度低但相关性高（视觉风格偏离但内容相关）
+   - **排除**：不相关或低匹配
    - **重复**：与更优图片高度相似
 
 **产出**：每张图片获得 `final_score` 和 `status`，写入数据库，更新 `_board.json`。
@@ -490,6 +532,22 @@ uv run python run.py reorder --board <board_id> --section <section_id> --order i
 ```
 
 应用在画廊查看器中拖拽调整的图片顺序。
+
+#### derive-centers — 推导中心值
+
+```bash
+uv run python run.py derive-centers --board <board_id>
+```
+
+从 Board 的设定文本推导各感知维度的中心值、权重和容差。AI 分析设定中的视觉需求（如"冷寂氛围"），输出每个相关维度的理想值。需要 Cherry Studio。
+
+#### feedback-centers — 偏好反馈
+
+```bash
+uv run python run.py feedback-centers --board <board_id>
+```
+
+从用户手动调整的图片排序中学习偏好。数学推导（排序靠前的图片加权平均）+ AI 分析（解释排序模式并调整中心值）。更新后的中心值用于后续搜索和筛选。需要先在查看器中拖拽排序并 Apply。
 
 #### serve — 本地 API 服务器
 
@@ -549,17 +607,28 @@ uv run python run.py parse --board "S3_屏蔽室"
 uv run python run.py plan --board "S3_屏蔽室"
 # 根据生成的搜索轨道，回到 Step 1 搜索更多图片
 
-# 7. Board 分析（需要 Cherry Studio）
+# 7. 推导中心值（需要 Cherry Studio）
+uv run python run.py derive-centers --board "S3_屏蔽室"
+# AI 从设定文本推导各感知维度的中心值
+
+# 8. Board 分析（需要 Cherry Studio）
 uv run python run.py analyze-board --board "S3_屏蔽室"
 
-# 8. 排序分级
+# 9. 排序分级
 uv run python run.py rank --board "S3_屏蔽室"
+# 自动用中心值计算匹配度、排序分级
 
-# 9. 画板编排
+# 10. 画板编排
 uv run python run.py compose --board "S3_屏蔽室"
 
-# 10. 查看结果
-# 浏览器打开 gallery/canvas.html → Load Board → 选择 data/boards/S3_屏蔽室/
+# 11. 查看并调整排序
+# 浏览器打开 gallery/canvas.html → Load Board → 拖拽调整顺序 → Apply Order
+
+# 12. 偏好反馈（可选，需要 Cherry Studio）
+uv run python run.py feedback-centers --board "S3_屏蔽室"
+# AI 从你的排序学习偏好，更新中心值
+
+# 13. 回到 Step 2 搜索补充图片，新图片自动按偏好排序
 ```
 
 ---
@@ -585,7 +654,7 @@ uv run python run.py compose --board "S3_屏蔽室"
 - **Axes**：散点图轴选择
 - **Map**：小地图导航
 - **Info**：Board 信息（设定文本、视觉目标、统计）
-- **Score**：评分权重调整（slider 实时调整，Recompute 即时重算分级）
+- **Score**：中心值面板（编辑各维度的中心值/权重/容差，Recompute 即时重算分级）
 
 ### 图片分级
 
@@ -593,7 +662,9 @@ uv run python run.py compose --board "S3_屏蔽室"
 - 核心参考（红）、精选参考（绿）、补充参考（蓝）
 - 异常值（黄）、待审（灰）、排除（暗）、重复（暗）
 
-Detail 视图显示完整的评分权重分解：每个子分数 × 权重 = 对最终分数的贡献值。
+Detail 视图分为两个模块：
+- **视觉指标**（蓝色条）：像素自动计算的亮度、饱和度、色温、对比度等
+- **感知维度**（橙色条）：AI 判断的景别、风格化、情绪强度等。有中心值时显示目标标记线和容差范围，值在容差内为绿色，超出为红色
 
 ### 排序调整
 

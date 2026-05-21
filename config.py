@@ -33,7 +33,7 @@ IMG2DATASET_FALLBACK = True
 # Vector store backend
 DEFAULT_VECTOR_BACKEND = os.environ.get("ARTREF_VECTOR_BACKEND", "faiss")
 
-# Ranking weights for final_score computation
+# Ranking weights for final_score computation (legacy, used only for backward compat)
 RANKING_WEIGHTS = {
     "relevance": 0.18,
     "design_reference": 0.16,
@@ -48,7 +48,15 @@ RANKING_WEIGHTS = {
     "duplicate_penalty": 0.10,
 }
 
-# Status determination thresholds
+# Distance-based scoring defaults (v5)
+DISTANCE_SCORING_DEFAULTS = {
+    "relevance_weight": 0.4,
+    "dimension_weight": 0.6,
+    "risk_penalty": 0.15,
+    "duplicate_penalty": 0.20,
+}
+
+# Status determination thresholds (legacy)
 STATUS_RULES = {
     "core": {"min_final_score": 0.82, "min_style_consistency": 0.70},
     "curated": {"min_final_score": 0.68},
@@ -56,6 +64,48 @@ STATUS_RULES = {
     "outlier": {"max_style_consistency": 0.40, "min_relevance": 0.60},
     "rejected": {"min_relevance": 0.45, "min_design_reference": 0.35},
     "duplicate": {"min_duplicate_penalty": 0.80},
+}
+
+# Status determination thresholds (v5 — dimension-distance scoring)
+STATUS_RULES_V2 = {
+    "core": {"min_score": 0.85, "min_relevance": 0.75},
+    "curated": {"min_score": 0.70},
+    "supplement": {"min_score": 0.55},
+    "outlier": {"max_dimension_match": 0.40, "min_relevance": 0.65},
+    "rejected": {"min_relevance": 0.40},
+    "duplicate": {"min_duplicate_penalty": 0.80},
+}
+
+# Perceptual dimension definitions — label and axis description for UI and VLM prompt
+PERCEPTUAL_DIMENSION_DEFS = {
+    "shot_scale":          {"label": "景别",       "axis": "远景 → 特写",        "label_low": "远景",   "label_high": "特写"},
+    "spatial_scale":       {"label": "空间尺度",   "axis": "私密 → 宏大",        "label_low": "私密",   "label_high": "宏大"},
+    "openness":            {"label": "开放感",     "axis": "封闭 → 开阔",        "label_low": "封闭",   "label_high": "开阔"},
+    "style":               {"label": "风格化",     "axis": "写实 → 风格化",      "label_low": "写实",   "label_high": "风格化"},
+    "ornateness":          {"label": "装饰度",     "axis": "朴素 → 华丽",        "label_low": "朴素",   "label_high": "华丽"},
+    "orderliness":         {"label": "秩序感",     "axis": "混乱 → 规整",        "label_low": "混乱",   "label_high": "规整"},
+    "emotion_intensity":   {"label": "情绪强度",   "axis": "平静 → 强烈",        "label_low": "平静",   "label_high": "强烈"},
+    "warmth":              {"label": "色温氛围",   "axis": "冷酷 → 温暖",        "label_low": "冷酷",   "label_high": "温暖"},
+    "material_roughness":  {"label": "材质粗度",   "axis": "精致 → 粗粝",        "label_low": "精致",   "label_high": "粗粝"},
+    "decay":               {"label": "破败度",     "axis": "完好 → 破败",        "label_low": "完好",   "label_high": "破败"},
+    "era_feel":            {"label": "时代感",     "axis": "古典 → 未来",        "label_low": "古典",   "label_high": "未来"},
+    "industrialness":      {"label": "工业感",     "axis": "自然 → 工业",        "label_low": "自然",   "label_high": "工业"},
+    "religiousness":       {"label": "宗教感",     "axis": "世俗 → 神圣",        "label_low": "世俗",   "label_high": "神圣"},
+    "fantasy_level":       {"label": "奇幻程度",   "axis": "现实 → 奇幻",        "label_low": "现实",   "label_high": "奇幻"},
+    "sci_fi_level":        {"label": "科幻程度",   "axis": "现实 → 科幻",        "label_low": "现实",   "label_high": "科幻"},
+}
+
+# Pixel metric definitions — label and axis for UI
+PIXEL_METRIC_DEFS = {
+    "brightness":          {"label": "亮度",       "axis": "暗 → 亮"},
+    "saturation":          {"label": "饱和度",     "axis": "灰 → 鲜艳"},
+    "color_temperature":   {"label": "色温",       "axis": "冷 → 暖"},
+    "dominant_hue":        {"label": "主色调",     "axis": "蓝绿 → 红黄"},
+    "contrast":            {"label": "对比度",     "axis": "柔和 → 强对比"},
+    "color_complexity":    {"label": "色彩丰富度", "axis": "单纯 → 丰富"},
+    "edge_density":        {"label": "边缘密度",   "axis": "简洁 → 复杂"},
+    "texture_complexity":  {"label": "纹理复杂度", "axis": "平滑 → 粗糙"},
+    "spatial_openness":    {"label": "空间开放度", "axis": "封闭 → 开阔"},
 }
 
 # Board defaults

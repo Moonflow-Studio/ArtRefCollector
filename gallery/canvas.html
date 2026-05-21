@@ -344,34 +344,37 @@ const COLLECTION_CONFIG = '_collection.json';
 const COL_SPACING = 200;
 const API_BASE = 'http://localhost:8765';
 
-const METRIC_DEFS = {
-  // VisualMetrics (pixel-level)
-  brightness:        { label: '亮度',       axis: '暗 ↔ 亮',       group: 'pixel' },
-  saturation:        { label: '饱和度',     axis: '灰 ↔ 鲜艳',     group: 'pixel' },
-  warmth:            { label: '色温',       axis: '冷 ↔ 暖',       group: 'pixel' },
-  contrast:          { label: '对比度',     axis: '柔和 ↔ 强对比',  group: 'pixel' },
-  color_complexity:  { label: '色彩复杂度', axis: '单纯 ↔ 丰富',   group: 'pixel' },
-  detail_density:    { label: '细节密度',   axis: '简洁 ↔ 复杂',   group: 'pixel' },
-  openness:          { label: '开阔度',     axis: '封闭 ↔ 开阔',   group: 'pixel' },
-  // VisualMetrics (subjective)
-  shot_scale:        { label: '景别',       axis: '远景 ↔ 特写',   group: 'subjective' },
-  monumentality:     { label: '尺度感',     axis: '私密 ↔ 宏大',   group: 'subjective' },
-  religiousness:     { label: '宗教感',     axis: '弱 ↔ 强',       group: 'subjective' },
-  industrialness:    { label: '工业感',     axis: '弱 ↔ 强',       group: 'subjective' },
-  decay:             { label: '破败度',     axis: '完整 ↔ 破败',   group: 'subjective' },
-  orderliness:       { label: '秩序感',     axis: '混乱 ↔ 规整',   group: 'subjective' },
-  fantasy_level:     { label: '奇幻感',     axis: '现实 ↔ 奇幻',   group: 'subjective' },
-  sci_fi_level:      { label: '科幻感',     axis: '现实 ↔ 科幻',   group: 'subjective' },
-  // CurationScores
-  aesthetic_score:             { label: '美观度',     axis: '低 ↔ 高', group: 'curation' },
-  composition_score:           { label: '构图质量',   axis: '低 ↔ 高', group: 'curation' },
-  lighting_score:              { label: '光照质量',   axis: '低 ↔ 高', group: 'curation' },
-  design_reference_score:      { label: '设计参考度', axis: '低 ↔ 高', group: 'curation' },
-  style_consistency_score:     { label: '风格一致性', axis: '低 ↔ 高', group: 'curation' },
-  uniqueness_score:            { label: '独特性',     axis: '低 ↔ 高', group: 'curation' },
-  usability_score:             { label: '可用性',     axis: '低 ↔ 高', group: 'curation' },
-  risk_score:                  { label: '风险',       axis: '低 ↔ 高', group: 'curation' },
+const PIXEL_METRIC_DEFS = {
+  brightness:        { label: '亮度',       axis: '暗 → 亮' },
+  saturation:        { label: '饱和度',     axis: '灰 → 鲜艳' },
+  color_temperature: { label: '色温',       axis: '冷 → 暖' },
+  contrast:          { label: '对比度',     axis: '柔和 → 强对比' },
+  color_complexity:  { label: '色彩丰富度', axis: '单纯 → 丰富' },
+  edge_density:      { label: '边缘密度',   axis: '简洁 → 复杂' },
+  texture_complexity:{ label: '纹理复杂度', axis: '平滑 → 粗糙' },
+  spatial_openness:  { label: '空间开放度', axis: '封闭 → 开阔' },
 };
+
+const PERCEPTUAL_DIM_DEFS = {
+  shot_scale:         { label: '景别',       axis: '远景 → 特写' },
+  spatial_scale:      { label: '空间尺度',   axis: '私密 → 宏大' },
+  openness:           { label: '开放感',     axis: '封闭 → 开阔' },
+  style:              { label: '风格化',     axis: '写实 → 风格化' },
+  ornateness:         { label: '装饰度',     axis: '朴素 → 华丽' },
+  orderliness:        { label: '秩序感',     axis: '混乱 → 规整' },
+  emotion_intensity:  { label: '情绪强度',   axis: '平静 → 强烈' },
+  warmth:             { label: '色温氛围',   axis: '冷酷 → 温暖' },
+  material_roughness: { label: '材质粗度',   axis: '精致 → 粗粝' },
+  decay:              { label: '破败度',     axis: '完好 → 破败' },
+  era_feel:           { label: '时代感',     axis: '古典 → 未来' },
+  industrialness:     { label: '工业感',     axis: '自然 → 工业' },
+  religiousness:      { label: '宗教感',     axis: '世俗 → 神圣' },
+  fantasy_level:      { label: '奇幻程度',   axis: '现实 → 奇幻' },
+  sci_fi_level:       { label: '科幻程度',   axis: '现实 → 科幻' },
+};
+
+// Combined for backward compat (axes panel, etc.)
+const METRIC_DEFS = { ...PIXEL_METRIC_DEFS, ...PERCEPTUAL_DIM_DEFS };
 
 // ── State ──
 let collections = [];
@@ -410,6 +413,10 @@ const WEIGHT_LABELS = {
 };
 let scoringWeights = JSON.parse(localStorage.getItem('scoringWeights')) || {...DEFAULT_WEIGHTS};
 let scoringVisible = false;
+
+// Center values system (v5)
+let boardCenterValues = { centers: [], source: 'none', derived_at: '' };
+const DISTANCE_DEFAULTS = { relevance_weight: 0.4, dimension_weight: 0.6, risk_penalty: 0.15, duplicate_penalty: 0.20 };
 
 const viewport = document.getElementById('viewport');
 const world = document.getElementById('world');
@@ -610,6 +617,13 @@ function loadBoardData(data, boardId, fileMap) {
     resolver: resolver,
   };
   pendingOrders = {};
+
+  // Load center values from board data (v5)
+  if (data.center_values && data.center_values.centers) {
+    boardCenterValues = data.center_values;
+  } else {
+    boardCenterValues = { centers: [], source: 'none', derived_at: '' };
+  }
 
   // Populate allImages for scatter/metric access
   allImages = (data.images || []).map(img => ({
@@ -883,23 +897,42 @@ function updateBoardInfoPanel() {
   }
 }
 
-// ── Scoring Engine ──
+// ── Scoring Engine (v5: dimension-distance) ──
 function computeFinalScore(img) {
-  const w = scoringWeights;
-  const cs = img.curation_scores || {};
-  const a = (img.analysis || {});
+  return computeDimensionDistanceScore(img);
+}
+
+function computeDimensionDistanceScore(img) {
+  const d = DISTANCE_DEFAULTS;
+  const cv = boardCenterValues;
+  if (!cv || !cv.centers || cv.centers.length === 0) {
+    const a = img.analysis || {};
+    return a.relevance_score || 0.5;
+  }
+  // Build lookup from image dimensions
+  const pd = img.perceptual_dimensions || {};
+  const px = img.pixel_metrics || {};
+  const allDims = {};
+  Object.keys(PERCEPTUAL_DIM_DEFS).forEach(k => { allDims[k] = pd[k] ?? 0.5; });
+  ['brightness','saturation','color_temperature','contrast','color_complexity','spatial_openness'].forEach(k => { allDims[k] = px[k] ?? 0.5; });
+
+  let totalWeight = 0, weightedScore = 0;
+  cv.centers.forEach(dc => {
+    const val = allDims[dc.dimension];
+    if (val === undefined || val === null) return;
+    const distance = Math.abs(val - dc.center);
+    const dimScore = Math.exp(-Math.pow(distance / dc.tolerance, 2));
+    weightedScore += dimScore * dc.weight;
+    totalWeight += dc.weight;
+  });
+  if (totalWeight === 0) return 0.5;
+  const baseScore = weightedScore / totalWeight;
+  const relevance = (img.analysis || {}).relevance_score || 0.5;
+  const risk = (img.curation_scores || {}).risk_score || 0;
+  const dupPenalty = img.duplicate_penalty || 0;
   return Math.max(0, Math.min(1,
-    w.relevance * (a.relevance_score || 0)
-    + w.design_reference * (cs.design_reference_score || 0)
-    + w.aesthetic * (cs.aesthetic_score || 0)
-    + w.composition * (cs.composition_score || 0)
-    + w.lighting * (cs.lighting_score || 0)
-    + w.style_consistency * (cs.style_consistency_score || 0)
-    + w.usability * (cs.usability_score || 0)
-    + w.uniqueness * (cs.uniqueness_score || 0)
-    + w.source_quality * (img.source_quality_score || 0)
-    - w.risk_penalty * (cs.risk_score || 0)
-    - w.duplicate_penalty * (img.duplicate_penalty || 0)
+    d.relevance_weight * relevance + d.dimension_weight * baseScore
+    - d.risk_penalty * risk - d.duplicate_penalty * dupPenalty
   ));
 }
 
@@ -907,60 +940,89 @@ function assignStatus(img, finalScore) {
   if (img.status === 'duplicate') return 'duplicate';
   const a = img.analysis || {};
   if (a.is_relevant === false || a.final_recommendation === 'reject') return 'rejected';
-  const cs = img.curation_scores || {};
-  if ((a.relevance_score || 0) < 0.45 || (cs.design_reference_score || 0) < 0.35) return 'rejected';
-  if (finalScore >= 0.82 && (cs.style_consistency_score || 0) >= 0.70) return 'core';
-  if (finalScore >= 0.68) return 'curated';
-  if ((cs.style_consistency_score || 0) <= 0.40 && (a.relevance_score || 0) >= 0.60) return 'outlier';
-  if (finalScore >= 0.50) return 'supplement';
+  const relevance = a.relevance_score || 0.5;
+  if (relevance < 0.40) return 'rejected';
+  if (finalScore >= 0.85 && relevance >= 0.75) return 'core';
+  if (finalScore >= 0.70) return 'curated';
+  if (finalScore < 0.40 && relevance >= 0.65) return 'outlier';
+  if (finalScore >= 0.55) return 'supplement';
   return 'rejected';
 }
 
 function recomputeScores() {
   if (!currentBoard) return;
   currentBoard.images.forEach(img => {
-    img.final_score = computeFinalScore(img);
-    img.status = assignStatus(img, img.final_score);
+    const score = computeDimensionDistanceScore(img);
+    img.dimension_distance_score = score;
+    img.final_score = score;
+    img.status = assignStatus(img, score);
   });
   renderBoard();
-  localStorage.setItem('scoringWeights', JSON.stringify(scoringWeights));
+  // Persist center values
+  localStorage.setItem('boardCenterValues_' + currentBoard.id, JSON.stringify(boardCenterValues));
 }
 
 function updateScoringPanel() {
   const content = document.getElementById('scoringPanelContent');
   if (!content) return;
-  const w = scoringWeights;
-  const positiveKeys = ['relevance','design_reference','aesthetic','composition','lighting','style_consistency','usability','uniqueness','source_quality'];
-  const penaltyKeys = ['risk_penalty','duplicate_penalty'];
-  const posSum = positiveKeys.reduce((s,k) => s + w[k], 0);
-  let html = '<div class="scoring-section-label">正向权重</div>';
-  positiveKeys.forEach(k => {
-    html += `<div class="scoring-row"><span class="sw-label">${WEIGHT_LABELS[k]}</span><input type="range" class="sw-slider" min="0" max="0.5" step="0.01" value="${w[k]}" data-key="${k}"><span class="sw-val">${w[k].toFixed(2)}</span></div>`;
-  });
-  html += `<hr class="scoring-sep"><div class="scoring-section-label">惩罚权重</div>`;
-  penaltyKeys.forEach(k => {
-    html += `<div class="scoring-row"><span class="sw-label">${WEIGHT_LABELS[k]}</span><input type="range" class="sw-slider" min="0" max="0.5" step="0.01" value="${w[k]}" data-key="${k}"><span class="sw-val">${w[k].toFixed(2)}</span></div>`;
-  });
-  html += `<div class="scoring-sum">正向权重总和: <span style="color:${Math.abs(posSum-1.0)<0.01?'var(--success)':'var(--warn)'}">${posSum.toFixed(2)}</span></div>`;
-  html += `<div class="scoring-actions"><button class="btn-reset-w">重置默认</button><button class="btn-recompute">重新计算</button></div>`;
+  const cv = boardCenterValues;
+  let html = `<div class="scoring-section-label">中心值 (来源: ${cv.source || '未设置'})</div>`;
+  if (cv.centers && cv.centers.length > 0) {
+    cv.centers.forEach(dc => {
+      const def = PERCEPTUAL_DIM_DEFS[dc.dimension] || PIXEL_METRIC_DEFS[dc.dimension] || { label: dc.dimension };
+      html += `<div class="scoring-row" style="flex-wrap:wrap;gap:4px 12px">
+        <span class="sw-label" style="min-width:60px">${def.label}</span>
+        <span class="sw-val" style="min-width:80px">中心: <input type="range" class="center-slider" min="0" max="1" step="0.01" value="${dc.center}" data-dim="${dc.dimension}" data-field="center" style="width:60px;vertical-align:middle"><span class="cv-val">${dc.center.toFixed(2)}</span></span>
+        <span class="sw-val" style="min-width:80px">权重: <input type="range" class="center-slider" min="0" max="5" step="0.1" value="${dc.weight}" data-dim="${dc.dimension}" data-field="weight" style="width:50px;vertical-align:middle"><span class="cv-val">${dc.weight.toFixed(1)}</span></span>
+        <span class="sw-val" style="min-width:80px">容差: <input type="range" class="center-slider" min="0.05" max="1" step="0.05" value="${dc.tolerance}" data-dim="${dc.dimension}" data-field="tolerance" style="width:50px;vertical-align:middle"><span class="cv-val">${dc.tolerance.toFixed(2)}</span></span>
+        <button class="btn-remove-cv" data-dim="${dc.dimension}" style="font-size:10px;padding:0 4px;cursor:pointer">×</button>
+      </div>`;
+    });
+  } else {
+    html += `<div style="color:#888;font-size:11px;padding:8px 0">暂无中心值。使用「自动推导」或「从反馈推导」按钮生成。</div>`;
+  }
+  html += `<div class="scoring-actions" style="margin-top:8px">
+    <button class="btn-auto-derive">自动推导</button>
+    <button class="btn-feedback-derive">从反馈推导</button>
+    <button class="btn-recompute">重新计算</button>
+  </div>`;
   content.innerHTML = html;
-  // Wire sliders
-  content.querySelectorAll('.sw-slider').forEach(slider => {
+
+  // Wire center value sliders
+  content.querySelectorAll('.center-slider').forEach(slider => {
     slider.addEventListener('input', () => {
-      const key = slider.dataset.key;
-      scoringWeights[key] = parseFloat(slider.value);
-      slider.nextElementSibling.textContent = scoringWeights[key].toFixed(2);
-      // Update sum
-      const sum = positiveKeys.reduce((s,k) => s + scoringWeights[k], 0);
-      const sumEl = content.querySelector('.scoring-sum span');
-      if (sumEl) { sumEl.textContent = sum.toFixed(2); sumEl.style.color = Math.abs(sum-1.0)<0.01 ? 'var(--success)' : 'var(--warn)'; }
+      const dim = slider.dataset.dim;
+      const field = slider.dataset.field;
+      const val = parseFloat(slider.value);
+      const dc = boardCenterValues.centers.find(c => c.dimension === dim);
+      if (dc) { dc[field] = val; }
+      slider.nextElementSibling.textContent = field === 'weight' ? val.toFixed(1) : val.toFixed(2);
     });
   });
-  content.querySelector('.btn-reset-w').addEventListener('click', () => {
-    scoringWeights = {...DEFAULT_WEIGHTS};
-    updateScoringPanel();
+
+  // Wire remove buttons
+  content.querySelectorAll('.btn-remove-cv').forEach(btn => {
+    btn.addEventListener('click', () => {
+      boardCenterValues.centers = boardCenterValues.centers.filter(c => c.dimension !== btn.dataset.dim);
+      updateScoringPanel();
+    });
   });
-  content.querySelector('.btn-recompute').addEventListener('click', recomputeScores);
+
+  // Wire action buttons
+  const autoBtn = content.querySelector('.btn-auto-derive');
+  if (autoBtn) autoBtn.addEventListener('click', () => {
+    if (!currentBoard || !currentBoard.setting_text) { alert('需要先加载Board并包含设定文本'); return; }
+    alert('请通过 CLI 运行: python run.py derive-centers --board ' + currentBoard.id);
+  });
+
+  const fbBtn = content.querySelector('.btn-feedback-derive');
+  if (fbBtn) fbBtn.addEventListener('click', () => {
+    if (!currentBoard) { alert('需要先加载Board'); return; }
+    alert('请通过 CLI 运行: python run.py feedback-centers --board ' + currentBoard.id);
+  });
+
+  const recomputeBtn = content.querySelector('.btn-recompute');
+  if (recomputeBtn) recomputeBtn.addEventListener('click', recomputeScores);
 }
 
 // Global img error handler — show placeholder on load failure
@@ -1088,11 +1150,22 @@ function resetOrder(sectionId) {
 }
 
 // ── Metric helpers ──
-function getMetric(img, key) { const v = (img.visual_metrics||{})[key] ?? (img.subjective_metrics||{})[key]; return typeof v === 'number' ? v : null; }
-function hasMetrics() { return allImages.some(({img}) => img.visual_metrics && Object.keys(img.visual_metrics).length > 0); }
+function getMetric(img, key) {
+  const pd = img.perceptual_dimensions || {};
+  const px = img.pixel_metrics || {};
+  const vm = img.visual_metrics || {};
+  const sm = img.subjective_metrics || {};
+  const v = px[key] ?? pd[key] ?? vm[key] ?? sm[key];
+  return typeof v === 'number' ? v : null;
+}
+function hasMetrics() { return allImages.some(({img}) => (img.pixel_metrics && Object.keys(img.pixel_metrics).length > 0) || (img.perceptual_dimensions && Object.keys(img.perceptual_dimensions).length > 0)); }
 function getAvailableMetrics() {
   const found = new Set();
-  allImages.forEach(({img}) => { Object.entries(img.visual_metrics||{}).forEach(([k,v]) => { if (v != null) found.add(k); }); Object.entries(img.subjective_metrics||{}).forEach(([k,v]) => { if (v != null) found.add(k); }); });
+  allImages.forEach(({img}) => {
+    Object.entries(img.pixel_metrics||{}).forEach(([k,v]) => { if (v != null && v !== 0.5) found.add(k); });
+    Object.entries(img.perceptual_dimensions||{}).forEach(([k,v]) => { if (v != null && v !== 0.5) found.add(k); });
+    Object.entries(img.visual_metrics||{}).forEach(([k,v]) => { if (v != null) found.add(k); });
+  });
   return [...found].filter(k => METRIC_DEFS[k]);
 }
 
@@ -1144,11 +1217,11 @@ function updateAxisInfo() {
 function openDetail(img, src) {
   document.getElementById('detail-img').src = src;
   document.getElementById('detailDesc').textContent = img.description || '';
-  const finalScore = img.final_score || img.score || img.quality_score || 0;
+  const finalScore = img.dimension_distance_score || img.final_score || img.score || img.quality_score || 0;
   const tier = TIER_DEFS[img.status] || TIER_DEFS.candidate;
   const parts = [];
   parts.push(`<span class="tier-badge" style="background:${tier.bg};color:${tier.color};position:static;display:inline-block">${tier.label}</span>`);
-  if (finalScore) parts.push(`<span>Score: ${typeof finalScore === 'number' ? finalScore.toFixed(3) : finalScore}</span>`);
+  if (finalScore) parts.push(`<span>匹配度: ${typeof finalScore === 'number' ? finalScore.toFixed(3) : finalScore}</span>`);
   if (img.mood) parts.push(`<span>${img.mood}</span>`);
   if (img.style) parts.push(`<span>${img.style}</span>`);
   if (img.analysis && img.analysis.visual_summary) parts.push(`<span>${img.analysis.visual_summary.substring(0,80)}</span>`);
@@ -1156,45 +1229,60 @@ function openDetail(img, src) {
   const tags = img.tags || (img.analysis ? img.analysis.style_tags : []) || [];
   document.getElementById('detailTags').innerHTML = tags.map(t=>`<span>${t}</span>`).join('');
   const md = document.getElementById('detail-metrics'); md.innerHTML = '';
-  // Visual metrics section
-  const vm = img.visual_metrics || {};
-  const vmEntries = Object.entries(vm).filter(([k,v])=>v!=null && v!==0.5).sort((a,b)=>Math.abs(b[1]-0.5)-Math.abs(a[1]-0.5));
-  if (vmEntries.length) {
-    md.innerHTML += `<div style="font-size:10px;color:#555;margin:6px 0 4px;text-transform:uppercase;letter-spacing:0.5px">视觉指标</div>`;
-    vmEntries.forEach(([k,v])=>{
-      const d = METRIC_DEFS[k] || { label: k, axis: '' };
-      md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${d.axis}">${d.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(v*100)}%"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
+
+  // ── Module 1: Pixel Metrics (视觉指标) ──
+  const px = img.pixel_metrics || {};
+  const pxEntries = Object.entries(PIXEL_METRIC_DEFS)
+    .map(([k,def]) => [k, px[k], def])
+    .filter(([k,v]) => v != null && v !== 0.5)
+    .sort((a,b) => Math.abs(b[1]-0.5) - Math.abs(a[1]-0.5));
+  if (pxEntries.length) {
+    md.innerHTML += `<div class="detail-section-header" style="font-size:12px;font-weight:600;color:#4a9eff;margin:10px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(74,158,255,0.3)">视觉指标 / Pixel Metrics</div>`;
+    pxEntries.forEach(([k,v,def]) => {
+      md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${def.axis}">${def.label}</span><div class="bar-track" style="background:rgba(74,158,255,0.1)"><div class="bar-fill" style="width:${Math.round(v*100)}%;background:linear-gradient(90deg,#3a7bd5,#4a9eff)"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
     });
   }
-  // Curation scores with weight contribution
-  const cs = img.curation_scores || {};
-  const w = scoringWeights;
-  const a = img.analysis || {};
-  const contribItems = [
-    { key: 'relevance', val: a.relevance_score || 0, weight: w.relevance, label: '相关性' },
-    { key: 'design_reference_score', val: cs.design_reference_score || 0, weight: w.design_reference, label: '设计参考' },
-    { key: 'aesthetic_score', val: cs.aesthetic_score || 0, weight: w.aesthetic, label: '美观度' },
-    { key: 'composition_score', val: cs.composition_score || 0, weight: w.composition, label: '构图' },
-    { key: 'lighting_score', val: cs.lighting_score || 0, weight: w.lighting, label: '光照' },
-    { key: 'style_consistency_score', val: cs.style_consistency_score || 0, weight: w.style_consistency, label: '风格一致' },
-    { key: 'usability_score', val: cs.usability_score || 0, weight: w.usability, label: '可用性' },
-    { key: 'uniqueness_score', val: cs.uniqueness_score || 0, weight: w.uniqueness, label: '独特性' },
-    { key: 'source_quality', val: img.source_quality_score || 0, weight: w.source_quality, label: '来源质量' },
-  ];
-  const penaltyItems = [
-    { key: 'risk_score', val: cs.risk_score || 0, weight: w.risk_penalty, label: '风险惩罚' },
-    { key: 'duplicate_penalty', val: img.duplicate_penalty || 0, weight: w.duplicate_penalty, label: '重复惩罚' },
-  ];
-  md.innerHTML += `<div style="font-size:10px;color:#555;margin:10px 0 4px;text-transform:uppercase;letter-spacing:0.5px">评分权重分解</div>`;
-  contribItems.forEach(item => {
-    const contrib = item.val * item.weight;
-    md.innerHTML += `<div class="metric-bar"><span class="bar-label">${item.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(item.val*100)}%"></div></div><span class="bar-val" style="color:#aaa">${item.val.toFixed(2)} × ${item.weight.toFixed(2)} = <span style="color:var(--success)">${contrib.toFixed(3)}</span></span></div>`;
-  });
-  md.innerHTML += `<div style="font-size:10px;color:#555;margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px">惩罚项</div>`;
-  penaltyItems.forEach(item => {
-    const contrib = item.val * item.weight;
-    md.innerHTML += `<div class="metric-bar"><span class="bar-label">${item.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(item.val*100)}%;background:#d44"></div></div><span class="bar-val" style="color:#aaa">${item.val.toFixed(2)} × ${item.weight.toFixed(2)} = <span style="color:#d44">-${contrib.toFixed(3)}</span></span></div>`;
-  });
+
+  // ── Module 2: Perceptual Dimensions (感知维度) ──
+  const pd = img.perceptual_dimensions || {};
+  const cv = boardCenterValues || { centers: [] };
+  const cvMap = {};
+  (cv.centers || []).forEach(c => { cvMap[c.dimension] = c; });
+
+  const pdEntries = Object.entries(PERCEPTUAL_DIM_DEFS)
+    .map(([k,def]) => [k, pd[k], def])
+    .filter(([k,v]) => v != null && (v !== 0.5 || cvMap[k]));  // Show if has value or has center
+    if (pdEntries.length) {
+    md.innerHTML += `<div class="detail-section-header" style="font-size:12px;font-weight:600;color:#e8a04c;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(232,160,76,0.3)">感知维度 / Perceptual Dimensions</div>`;
+    pdEntries.forEach(([k,v,def]) => {
+      const dc = cvMap[k];
+      let extras = '';
+      if (dc) {
+        // Show center value indicator on the bar
+        const centerPos = Math.round(dc.center * 100);
+        const tolLeft = Math.round(Math.max(0, dc.center - dc.tolerance) * 100);
+        const tolRight = Math.round(Math.min(100, dc.center + dc.tolerance) * 100);
+        const inRange = v >= (dc.center - dc.tolerance) && v <= (dc.center + dc.tolerance);
+        const dotColor = inRange ? '#4caf50' : '#e94560';
+        extras = `<span class="bar-val" style="font-size:9px;color:#888">中心${dc.center.toFixed(2)}</span>`;
+        // Custom bar with center marker
+        md.innerHTML += `<div class="metric-bar">
+          <span class="bar-label" title="${def.axis}">${def.label}</span>
+          <div class="bar-track" style="background:rgba(232,160,76,0.08);position:relative">
+            <div style="position:absolute;left:${tolLeft}%;width:${tolRight-tolLeft}%;top:0;bottom:0;background:rgba(232,160,76,0.12);border-radius:2px"></div>
+            <div style="position:absolute;left:${centerPos}%;top:0;bottom:0;width:2px;background:rgba(232,160,76,0.5)"></div>
+            <div class="bar-fill" style="width:${Math.round(v*100)}%;background:linear-gradient(90deg,#c88a30,#e8a04c);position:relative;z-index:1"></div>
+            <div style="position:absolute;left:${Math.round(v*100)-2}%;top:-1px;width:6px;height:calc(100% + 2px);background:${dotColor};border-radius:3px;z-index:2"></div>
+          </div>
+          ${extras}
+          <span class="bar-val">${v.toFixed(2)}</span>
+        </div>`;
+      } else {
+        md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${def.axis}">${def.label}</span><div class="bar-track" style="background:rgba(232,160,76,0.08)"><div class="bar-fill" style="width:${Math.round(v*100)}%;background:linear-gradient(90deg,#c88a30,#e8a04c)"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
+      }
+    });
+  }
+
   detail.classList.add('active');
 }
 document.getElementById('detailClose').addEventListener('click', () => detail.classList.remove('active'));

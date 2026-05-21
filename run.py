@@ -571,6 +571,117 @@ def cmd_serve(args):
     start_server(port=args.port)
 
 
+def cmd_derive_centers(args):
+    """Derive center values from a board's setting text."""
+    from analyze.setting_parser import derive_center_values
+    from store.database import ImageDatabase
+
+    db = ImageDatabase()
+    board = db.get_board(args.board)
+    if not board:
+        print(json.dumps({"error": f"Board {args.board} not found"}))
+        db.close()
+        sys.exit(1)
+
+    if not board.setting_text:
+        print(json.dumps({"error": "Board has no setting text"}))
+        db.close()
+        sys.exit(1)
+
+    cv = derive_center_values(
+        setting_text=board.setting_text,
+        api_base=args.api_base,
+        model=args.model,
+        api_key=args.api_key,
+    )
+
+    board.center_values = cv
+    db.save_board(board)
+
+    # Update _board.json
+    if board.base_dir:
+        board_json = db.export_board_json(args.board)
+        if board_json:
+            Path(board.base_dir).joinpath("_board.json").write_text(board_json, encoding="utf-8")
+
+    db.close()
+
+    output = {
+        "board_id": args.board,
+        "source": cv.source,
+        "centers_count": len(cv.centers),
+        "centers": [c.model_dump() for c in cv.centers],
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+
+def cmd_feedback_centers(args):
+    """Derive center values from user's manual image reordering."""
+    from analyze.setting_parser import derive_centers_from_feedback, merge_center_values
+    from store.database import ImageDatabase
+
+    db = ImageDatabase()
+    board = db.get_board(args.board)
+    if not board:
+        print(json.dumps({"error": f"Board {args.board} not found"}))
+        db.close()
+        sys.exit(1)
+
+    # Collect user orders from all sections
+    sections = db.get_sections(args.board)
+    all_ordered: list = []  # list of (BoardImage, weight) tuples
+
+    for section in sections:
+        if not section.user_order:
+            continue
+        images = db.get_board_images(args.board)
+        img_map = {img.id: img for img in images}
+        for rank, image_id in enumerate(section.user_order):
+            img = img_map.get(image_id)
+            if img:
+                weight = 1.0 / (1.0 + rank * 0.5)
+                all_ordered.append((img, weight))
+
+    if not all_ordered:
+        print(json.dumps({"error": "No user ordering found. Reorder images in the viewer first."}))
+        db.close()
+        sys.exit(1)
+
+    fb_centers = derive_centers_from_feedback(
+        setting_text=board.setting_text,
+        ordered_images=all_ordered,
+        api_base=args.api_base,
+        model=args.model,
+        api_key=args.api_key,
+    )
+
+    # Merge with existing AI-derived centers if available
+    if board.center_values.centers:
+        merged = merge_center_values(board.center_values, fb_centers, feedback_weight=0.6)
+    else:
+        merged = fb_centers
+
+    board.center_values = merged
+    db.save_board(board)
+
+    # Update _board.json
+    if board.base_dir:
+        board_json = db.export_board_json(args.board)
+        if board_json:
+            Path(board.base_dir).joinpath("_board.json").write_text(board_json, encoding="utf-8")
+
+    db.close()
+
+    output = {
+        "board_id": args.board,
+        "source": merged.source,
+        "centers_count": len(merged.centers),
+        "centers": [c.model_dump() for c in merged.centers],
+        "images_used": len(all_ordered),
+    }
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+
 def cmd_pipeline(args):
     ensure_dirs()
     sid = new_session()
@@ -769,6 +880,20 @@ def main():
     p = sub.add_parser("serve")
     p.add_argument("--port", type=int, default=8765, help="Port number (default: 8765)")
 
+    # derive-centers
+    p = sub.add_parser("derive-centers")
+    p.add_argument("--board", required=True, help="Board ID")
+    p.add_argument("--api-base", default="http://localhost:23333")
+    p.add_argument("--api-key", default="")
+    p.add_argument("--model", default="zhipu:glm-4.6v")
+
+    # feedback-centers
+    p = sub.add_parser("feedback-centers")
+    p.add_argument("--board", required=True, help="Board ID")
+    p.add_argument("--api-base", default="http://localhost:23333")
+    p.add_argument("--api-key", default="")
+    p.add_argument("--model", default="zhipu:glm-4.6v")
+
     # pipeline
     p = sub.add_parser("pipeline")
     p.add_argument("keywords")
@@ -805,6 +930,8 @@ def main():
         "reorder": cmd_reorder,
         "serve": cmd_serve,
         "pipeline": cmd_pipeline,
+        "derive-centers": cmd_derive_centers,
+        "feedback-centers": cmd_feedback_centers,
     }
     commands[args.command](args)
 

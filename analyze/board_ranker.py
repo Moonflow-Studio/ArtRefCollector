@@ -5,18 +5,25 @@ Three-tier dedup:
   2. pHash perceptual dedup
   3. CLIP semantic dedup
 
-Composite scoring + status assignment.
+Dimension-distance scoring + status assignment (v5).
 """
 
 import hashlib
+import math
 import sys
 from pathlib import Path
 
 import numpy as np
 from tqdm import tqdm
 
-from config import RANKING_WEIGHTS, STATUS_RULES
-from models.schemas import BoardImage, CurationScores
+from config import DISTANCE_SCORING_DEFAULTS, STATUS_RULES_V2
+from models.schemas import (
+    BoardCenterValues,
+    BoardImage,
+    DimensionCenter,
+    PerceptualDimensions,
+    PixelMetrics,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -64,9 +71,9 @@ def dedup_phash(images: list[BoardImage], db, threshold: int = 10) -> int:
         similar = db.find_similar_by_phash(img.board_id, img.phash, threshold)
         for s in similar:
             if s.id != img.id and s.status != "duplicate":
-                # Keep the one with higher score
-                s_score = s.curation_scores.design_reference_score
-                img_score = img.curation_scores.design_reference_score
+                # Keep the one with higher dimension_distance_score
+                s_score = s.dimension_distance_score
+                img_score = img.dimension_distance_score
                 if img_score > s_score:
                     s.status = "duplicate"
                     s.duplicate_penalty = 0.85
@@ -106,9 +113,9 @@ def dedup_clip(images: list[BoardImage], threshold: float = 0.92) -> int:
                 continue
             sim = float(np.dot(embeddings[i], embeddings[j]))
             if sim >= threshold:
-                # Keep higher design_reference_score
-                si = valid[i].curation_scores.design_reference_score
-                sj = valid[j].curation_scores.design_reference_score
+                # Keep higher dimension_distance_score
+                si = valid[i].dimension_distance_score
+                sj = valid[j].dimension_distance_score
                 if si >= sj:
                     loser = valid[j]
                 else:
@@ -120,81 +127,124 @@ def dedup_clip(images: list[BoardImage], threshold: float = 0.92) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Composite scoring
+# Dimension-distance scoring (v5)
 # ---------------------------------------------------------------------------
 
-def compute_final_score(img: BoardImage) -> float:
-    """Compute weighted final score from curation scores + metadata."""
-    cs = img.curation_scores
-    w = RANKING_WEIGHTS
-    score = (
-        w["relevance"] * (img.analysis.relevance_score if img.analysis else 0.0)
-        + w["design_reference"] * cs.design_reference_score
-        + w["aesthetic"] * cs.aesthetic_score
-        + w["composition"] * cs.composition_score
-        + w["lighting"] * cs.lighting_score
-        + w["style_consistency"] * cs.style_consistency_score
-        + w["usability"] * cs.usability_score
-        + w["uniqueness"] * cs.uniqueness_score
-        + w["source_quality"] * img.source_quality_score
-        - w["risk_penalty"] * cs.risk_score
-        - w["duplicate_penalty"] * img.duplicate_penalty
+def compute_dimension_distance_score(
+    img: BoardImage,
+    center_values: BoardCenterValues | None = None,
+) -> float:
+    """Score based on distance from center values using Gaussian decay.
+
+    Returns 0-1 score. Higher = closer to center values = better match.
+    """
+    defaults = DISTANCE_SCORING_DEFAULTS
+
+    if not center_values or not center_values.centers:
+        # No center values defined: use relevance as base, neutral dimension score
+        relevance = img.analysis.relevance_score if img.analysis else 0.5
+        return relevance
+
+    # Build lookup from image's dimension values
+    pd = img.perceptual_dimensions
+    px = img.pixel_metrics
+    all_dims: dict[str, float] = {}
+    for field_name in PerceptualDimensions.model_fields:
+        all_dims[field_name] = getattr(pd, field_name, 0.5)
+    # Pixel dimensions that may also have center targets
+    for field_name in ("brightness", "saturation", "color_temperature",
+                        "contrast", "color_complexity", "spatial_openness"):
+        all_dims[field_name] = getattr(px, field_name, 0.5)
+
+    total_weight = 0.0
+    weighted_score = 0.0
+
+    for dc in center_values.centers:
+        val = all_dims.get(dc.dimension)
+        if val is None:
+            continue
+        distance = abs(val - dc.center)
+        # Gaussian decay: score = exp(-(distance/tolerance)^2)
+        dim_score = math.exp(-((distance / dc.tolerance) ** 2))
+        weighted_score += dim_score * dc.weight
+        total_weight += dc.weight
+
+    if total_weight == 0:
+        return 0.5
+
+    base_score = weighted_score / total_weight
+
+    # Combine with relevance
+    relevance = img.analysis.relevance_score if img.analysis else 0.5
+    risk = img.curation_scores.risk_score
+    dup_penalty = img.duplicate_penalty
+
+    combined = (
+        defaults["relevance_weight"] * relevance
+        + defaults["dimension_weight"] * base_score
+        - defaults["risk_penalty"] * risk
+        - defaults["duplicate_penalty"] * dup_penalty
     )
-    return max(0.0, min(1.0, score))
+    return max(0.0, min(1.0, combined))
+
+
+# Legacy compat
+def compute_final_score(img: BoardImage) -> float:
+    """Legacy wrapper — delegates to dimension-distance scoring."""
+    return compute_dimension_distance_score(img)
 
 
 # ---------------------------------------------------------------------------
-# Status assignment
+# Status assignment (v5)
 # ---------------------------------------------------------------------------
 
-def assign_status(img: BoardImage, final_score: float) -> str:
-    """Determine image status based on scores and rules."""
-    cs = img.curation_scores
+def assign_status_v2(img: BoardImage, distance_score: float) -> str:
+    """Determine image status based on dimension-distance score."""
+    rules = STATUS_RULES_V2
     analysis = img.analysis
-    rules = STATUS_RULES
 
-    # Already duplicate
     if img.status == "duplicate":
         return "duplicate"
 
-    # Rejected
     if analysis and not analysis.is_relevant:
         return "rejected"
     if analysis and analysis.final_recommendation == "reject":
         return "rejected"
 
     relevance = analysis.relevance_score if analysis else 0.5
-    design_ref = cs.design_reference_score
 
     reject_rule = rules.get("rejected", {})
-    if relevance < reject_rule.get("min_relevance", 0.45):
-        return "rejected"
-    if design_ref < reject_rule.get("min_design_reference", 0.35):
+    if relevance < reject_rule.get("min_relevance", 0.40):
         return "rejected"
 
     # Core
     core_rule = rules.get("core", {})
-    if (final_score >= core_rule.get("min_final_score", 0.82)
-            and cs.style_consistency_score >= core_rule.get("min_style_consistency", 0.70)):
+    if (distance_score >= core_rule.get("min_score", 0.85)
+            and relevance >= core_rule.get("min_relevance", 0.75)):
         return "core"
 
     # Curated
     curated_rule = rules.get("curated", {})
-    if final_score >= curated_rule.get("min_final_score", 0.68):
+    if distance_score >= curated_rule.get("min_score", 0.70):
         return "curated"
 
-    # Outlier
+    # Outlier: high relevance but low dimension match
     outlier_rule = rules.get("outlier", {})
-    if (cs.style_consistency_score <= outlier_rule.get("max_style_consistency", 0.40)
-            and relevance >= outlier_rule.get("min_relevance", 0.60)):
+    if (distance_score < outlier_rule.get("max_dimension_match", 0.40)
+            and relevance >= outlier_rule.get("min_relevance", 0.65)):
         return "outlier"
 
     # Supplement
     supplement_rule = rules.get("supplement", {})
-    if final_score >= supplement_rule.get("min_final_score", 0.50):
+    if distance_score >= supplement_rule.get("min_score", 0.55):
         return "supplement"
 
     return "rejected"
+
+
+# Legacy wrapper
+def assign_status(img: BoardImage, final_score: float) -> str:
+    return assign_status_v2(img, final_score)
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +257,7 @@ def rank_board_images(
     clip_threshold: float = 0.92,
     use_clip: bool = False,
 ) -> dict:
-    """Run full dedup + score + status pipeline for a board."""
+    """Run full dedup + dimension-distance score + status pipeline for a board."""
     from store.database import ImageDatabase
 
     db = ImageDatabase()
@@ -230,15 +280,29 @@ def rank_board_images(
     phash_removed = dedup_phash(images, db, phash_threshold)
     clip_removed = dedup_clip(images, clip_threshold) if use_clip else 0
 
-    # Phase 3: Compute final scores
+    # Derive center values if not already present
+    center_values = board.center_values
+    if not center_values.centers and board.setting_text:
+        try:
+            from analyze.setting_parser import derive_center_values
+            print("No center values found — deriving from setting text...")
+            center_values = derive_center_values(board.setting_text)
+            board.center_values = center_values
+            db.save_board(board)
+        except Exception as e:
+            print(f"Failed to derive center values: {e}", file=sys.stderr)
+
+    # Phase 3: Compute dimension-distance scores
     for img in images:
         if img.status == "duplicate":
             continue
-        final_score = compute_final_score(img)
-        status = assign_status(img, final_score)
-        img.final_score = final_score
+        distance_score = compute_dimension_distance_score(img, center_values)
+        status = assign_status_v2(img, distance_score)
+        img.dimension_distance_score = distance_score
+        img.final_score = distance_score  # Keep legacy field in sync
         img.status = status
-        db.update_image_scores(img.id, final_score, img.duplicate_penalty, status)
+        db.update_image_scores(img.id, distance_score, img.duplicate_penalty, status)
+        db.update_image_dimension_score(img.id, distance_score)
 
     # Update _board.json
     board_json = db.export_board_json(board_id)
@@ -261,4 +325,6 @@ def rank_board_images(
         "phash_duplicates": phash_removed,
         "clip_duplicates": clip_removed,
         "status_distribution": status_counts,
+        "center_values_source": center_values.source,
+        "center_values_count": len(center_values.centers),
     }

@@ -11,12 +11,15 @@ from config import DB_PATH
 # Import schemas for type hints only
 from models.schemas import (
     Board,
+    BoardCenterValues,
     BoardImage,
     BoardSection,
     CurationScores,
     ImageAnalysis,
     ImageCategoryScore,
     KeyImageRef,
+    PerceptualDimensions,
+    PixelMetrics,
     ReferenceTrack,
     StyleProfile,
     VisualMetrics,
@@ -53,7 +56,7 @@ def _json_loads_dict(val: str | None) -> dict:
 
 
 class ImageDatabase:
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
 
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path or str(DB_PATH)
@@ -78,6 +81,7 @@ class ImageDatabase:
                 setting_text TEXT DEFAULT '',
                 visual_goal_summary TEXT DEFAULT '',
                 style_profile TEXT DEFAULT '{}',
+                center_values TEXT DEFAULT '{}',
                 global_missing_needs TEXT DEFAULT '[]',
                 next_search_suggestions TEXT DEFAULT '[]',
                 created_at TEXT DEFAULT (datetime('now')),
@@ -116,6 +120,9 @@ class ImageDatabase:
                 categories TEXT DEFAULT '[]',
                 visual_metrics TEXT DEFAULT '{}',
                 curation_scores TEXT DEFAULT '{}',
+                pixel_metrics TEXT DEFAULT '{}',
+                perceptual_dimensions TEXT DEFAULT '{}',
+                dimension_distance_score REAL DEFAULT 0.0,
                 analysis TEXT DEFAULT '{}',
                 source_quality_score REAL DEFAULT 0.45,
                 final_score REAL DEFAULT 0.0,
@@ -202,6 +209,68 @@ class ImageDatabase:
             "SELECT value FROM schema_meta WHERE key='version'"
         ).fetchone()
         current = int(row["value"]) if row else 1
+
+        # v4 -> v5: add pixel_metrics, perceptual_dimensions, dimension_distance_score, center_values
+        if current < 5:
+            # Add new columns to board_images (if not exist)
+            cols = [r[1] for r in self._conn.execute("PRAGMA table_info(board_images)").fetchall()]
+            if "pixel_metrics" not in cols:
+                self._conn.execute("ALTER TABLE board_images ADD COLUMN pixel_metrics TEXT DEFAULT '{}'")
+            if "perceptual_dimensions" not in cols:
+                self._conn.execute("ALTER TABLE board_images ADD COLUMN perceptual_dimensions TEXT DEFAULT '{}'")
+            if "dimension_distance_score" not in cols:
+                self._conn.execute("ALTER TABLE board_images ADD COLUMN dimension_distance_score REAL DEFAULT 0.0")
+
+            # Add center_values to boards
+            board_cols = [r[1] for r in self._conn.execute("PRAGMA table_info(boards)").fetchall()]
+            if "center_values" not in board_cols:
+                self._conn.execute("ALTER TABLE boards ADD COLUMN center_values TEXT DEFAULT '{}'")
+
+            # Migrate existing data: populate new fields from legacy visual_metrics
+            rows = self._conn.execute(
+                "SELECT id, visual_metrics, curation_scores FROM board_images WHERE pixel_metrics = '{}'"
+            ).fetchall()
+            for r in rows:
+                try:
+                    vm = json.loads(r["visual_metrics"]) if r["visual_metrics"] else {}
+                    cs = json.loads(r["curation_scores"]) if r["curation_scores"] else {}
+
+                    # Build pixel_metrics from legacy vm pixel-derived fields
+                    pixel = {
+                        "brightness": vm.get("brightness", 0.5),
+                        "saturation": vm.get("saturation", 0.5),
+                        "contrast": vm.get("contrast", 0.5),
+                        "color_complexity": vm.get("color_complexity", 0.5),
+                    }
+
+                    # Build perceptual_dimensions from legacy vm subjective fields
+                    perceptual = {
+                        "shot_scale": vm.get("shot_scale", 0.5),
+                        "spatial_scale": vm.get("monumentality", 0.5),
+                        "openness": vm.get("openness", 0.5),
+                        "orderliness": vm.get("orderliness", 0.5),
+                        "warmth": vm.get("warmth", 0.5),
+                        "decay": vm.get("decay", 0.5),
+                        "industrialness": vm.get("industrialness", 0.5),
+                        "religiousness": vm.get("religiousness", 0.5),
+                        "fantasy_level": vm.get("fantasy_level", 0.5),
+                        "sci_fi_level": vm.get("sci_fi_level", 0.5),
+                    }
+
+                    self._conn.execute("""
+                        UPDATE board_images
+                        SET pixel_metrics = ?, perceptual_dimensions = ?
+                        WHERE id = ?
+                    """, (
+                        json.dumps(pixel, ensure_ascii=False),
+                        json.dumps(perceptual, ensure_ascii=False),
+                        r["id"],
+                    ))
+                except Exception:
+                    pass
+
+            self._conn.commit()
+
         if current < self.SCHEMA_VERSION:
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)",
@@ -217,14 +286,15 @@ class ImageDatabase:
         self._conn.execute("""
             INSERT INTO boards
                 (id, name, base_dir, setting_text, visual_goal_summary, style_profile,
-                 global_missing_needs, next_search_suggestions, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 center_values, global_missing_needs, next_search_suggestions, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 base_dir = excluded.base_dir,
                 setting_text = excluded.setting_text,
                 visual_goal_summary = excluded.visual_goal_summary,
                 style_profile = excluded.style_profile,
+                center_values = excluded.center_values,
                 global_missing_needs = excluded.global_missing_needs,
                 next_search_suggestions = excluded.next_search_suggestions,
                 updated_at = excluded.updated_at
@@ -235,6 +305,7 @@ class ImageDatabase:
             board.setting_text,
             board.visual_goal_summary,
             board.style_profile.model_dump_json(),
+            board.center_values.model_dump_json(),
             _json_dumps(board.global_missing_needs),
             _json_dumps(board.next_search_suggestions),
             board.created_at,
@@ -263,6 +334,9 @@ class ImageDatabase:
             setting_text=row["setting_text"],
             visual_goal_summary=row["visual_goal_summary"],
             style_profile=StyleProfile.model_validate_json(row["style_profile"]),
+            center_values=BoardCenterValues.model_validate_json(
+                row["center_values"] if "center_values" in row.keys() else "{}"
+            ),
             reference_tracks=tracks,
             images=images,
             sections=sections,
@@ -394,10 +468,11 @@ class ImageDatabase:
                  source_url, page_url, source_domain, source_query,
                  width, height, file_size, sha256, phash, status,
                  categories, visual_metrics, curation_scores, analysis,
+                 pixel_metrics, perceptual_dimensions, dimension_distance_score,
                  source_quality_score, final_score, duplicate_penalty,
                  filename, description, tags, style, color_palette,
                  mood, composition, quality_score, use_cases, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             img.id, board_id, img.track_id or None, img.local_path, img.thumb_path,
             img.source_url, img.page_url, domain, img.source_query,
@@ -406,6 +481,9 @@ class ImageDatabase:
             img.visual_metrics.model_dump_json(),
             img.curation_scores.model_dump_json(),
             img.analysis.model_dump_json(),
+            img.pixel_metrics.model_dump_json(),
+            img.perceptual_dimensions.model_dump_json(),
+            img.dimension_distance_score,
             img.source_quality_score, img.final_score, img.duplicate_penalty,
             img.filename, img.description,
             _json_dumps(img.tags), img.style,
@@ -429,6 +507,42 @@ class ImageDatabase:
             SET final_score = ?, duplicate_penalty = ?, status = ?
             WHERE id = ?
         """, (final_score, duplicate_penalty, status, image_id))
+        self._conn.commit()
+
+    def update_image_v5_analysis(
+        self, image_id: str, analysis: ImageAnalysis,
+        categories: list[ImageCategoryScore], perceptual: PerceptualDimensions,
+        risk_score: float, pixel: PixelMetrics,
+    ) -> None:
+        """Update image with v5 analysis (perceptual dimensions + pixel metrics)."""
+        legacy_curation = CurationScores(risk_score=risk_score)
+        self._conn.execute("""
+            UPDATE board_images
+            SET analysis = ?, categories = ?,
+                perceptual_dimensions = ?, pixel_metrics = ?,
+                curation_scores = ?,
+                status = CASE
+                    WHEN ? = 'reject' THEN 'rejected'
+                    ELSE status
+                END
+            WHERE id = ?
+        """, (
+            analysis.model_dump_json(),
+            _json_dumps([c.model_dump() for c in categories]),
+            perceptual.model_dump_json(),
+            pixel.model_dump_json(),
+            legacy_curation.model_dump_json(),
+            analysis.final_recommendation,
+            image_id,
+        ))
+        self._conn.commit()
+
+    def update_image_dimension_score(self, image_id: str, score: float) -> None:
+        """Update the dimension-distance score for an image."""
+        self._conn.execute(
+            "UPDATE board_images SET dimension_distance_score = ? WHERE id = ?",
+            (score, image_id),
+        )
         self._conn.commit()
 
     def update_image_analysis(self, image_id: str, analysis: ImageAnalysis,
@@ -665,6 +779,23 @@ class ImageDatabase:
             raise ValueError("Row is None")
         cats_raw = _json_loads_list(row["categories"])
         categories = [ImageCategoryScore(**c) for c in cats_raw]
+
+        # Parse new v5 fields (may not exist in very old rows)
+        pixel_metrics = PixelMetrics()
+        perceptual_dimensions = PerceptualDimensions()
+        dimension_distance_score = 0.0
+        try:
+            pm_raw = row["pixel_metrics"] if "pixel_metrics" in row.keys() else "{}"
+            if pm_raw and pm_raw != "{}":
+                pixel_metrics = PixelMetrics.model_validate_json(pm_raw)
+            pd_raw = row["perceptual_dimensions"] if "perceptual_dimensions" in row.keys() else "{}"
+            if pd_raw and pd_raw != "{}":
+                perceptual_dimensions = PerceptualDimensions.model_validate_json(pd_raw)
+            dds = row["dimension_distance_score"] if "dimension_distance_score" in row.keys() else 0.0
+            dimension_distance_score = float(dds) if dds else 0.0
+        except Exception:
+            pass
+
         return BoardImage(
             id=row["id"],
             board_id=row["board_id"],
@@ -682,6 +813,9 @@ class ImageDatabase:
             phash=row["phash"] or "",
             status=row["status"],
             categories=categories,
+            pixel_metrics=pixel_metrics,
+            perceptual_dimensions=perceptual_dimensions,
+            dimension_distance_score=dimension_distance_score,
             visual_metrics=VisualMetrics.model_validate_json(row["visual_metrics"]),
             curation_scores=CurationScores.model_validate_json(row["curation_scores"]),
             analysis=ImageAnalysis.model_validate_json(row["analysis"]),

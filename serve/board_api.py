@@ -263,6 +263,44 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
             orders = {s.section_id: s.user_order for s in sections if s.user_order}
             self._send_json({"board_id": board_id, "sections": orders})
 
+        elif sub == "update-centers":
+            # POST /api/boards/<id>/update-centers — save center values from UI
+            body = self._read_body()
+            db = self._get_db()
+            board = db.get_board(board_id)
+            if not board:
+                db.close()
+                self._send_json({"error": "Board not found"}, 404)
+                return
+            from models.schemas import BoardCenterValues
+            board.center_values = BoardCenterValues.model_validate(body)
+            db.save_board(board)
+            db.close()
+            self._send_json({"status": "ok", "centers": len(board.center_values.centers)})
+
+        elif sub == "recompute-scores":
+            # POST /api/boards/<id>/recompute-scores — recompute all scores with current centers
+            from analyze.board_ranker import compute_dimension_distance_score, assign_status_v2
+            db = self._get_db()
+            board = db.get_board(board_id)
+            if not board:
+                db.close()
+                self._send_json({"error": "Board not found"}, 404)
+                return
+            images = db.get_board_images(board_id)
+            for img in images:
+                if img.status == "duplicate":
+                    continue
+                score = compute_dimension_distance_score(img, board.center_values)
+                status = assign_status_v2(img, score)
+                img.dimension_distance_score = score
+                img.final_score = score
+                img.status = status
+                db.update_image_scores(img.id, score, img.duplicate_penalty, status)
+                db.update_image_dimension_score(img.id, score)
+            db.close()
+            self._send_json({"status": "ok", "images_updated": len(images)})
+
         else:
             self._send_json({"error": f"Unknown endpoint: POST {path}"}, 404)
 

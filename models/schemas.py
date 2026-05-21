@@ -71,6 +71,7 @@ class StyleProfile(BaseModel):
 
 
 class VisualMetrics(BaseModel):
+    """Legacy — kept for backward compat / migration. Use PixelMetrics + PerceptualDimensions instead."""
     brightness: float = Field(default=0.5, ge=0.0, le=1.0)
     saturation: float = Field(default=0.5, ge=0.0, le=1.0)
     warmth: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -89,6 +90,7 @@ class VisualMetrics(BaseModel):
 
 
 class CurationScores(BaseModel):
+    """Legacy — kept for backward compat / migration. No longer used for scoring."""
     aesthetic_score: float = Field(default=0.0, ge=0.0, le=1.0)
     composition_score: float = Field(default=0.0, ge=0.0, le=1.0)
     lighting_score: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -97,6 +99,61 @@ class CurationScores(BaseModel):
     uniqueness_score: float = Field(default=0.0, ge=0.0, le=1.0)
     usability_score: float = Field(default=0.0, ge=0.0, le=1.0)
     risk_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# New metric models (v5)
+# ---------------------------------------------------------------------------
+
+class PixelMetrics(BaseModel):
+    """Pixel-computed visual metrics — deterministic, no AI judgment."""
+    brightness: float = Field(default=0.5, ge=0.0, le=1.0)
+    saturation: float = Field(default=0.5, ge=0.0, le=1.0)
+    color_temperature: float = Field(default=0.5, ge=0.0, le=1.0)
+    dominant_hue: float = Field(default=0.5, ge=0.0, le=1.0)
+    contrast: float = Field(default=0.5, ge=0.0, le=1.0)
+    color_complexity: float = Field(default=0.5, ge=0.0, le=1.0)
+    edge_density: float = Field(default=0.5, ge=0.0, le=1.0)
+    texture_complexity: float = Field(default=0.5, ge=0.0, le=1.0)
+    composition_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    composition_y: float = Field(default=0.5, ge=0.0, le=1.0)
+    spatial_openness: float = Field(default=0.5, ge=0.0, le=1.0)
+    human_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class PerceptualDimensions(BaseModel):
+    """AI-judged perceptual dimensions — all on semantic 0-1 axes."""
+    shot_scale: float = Field(default=0.5, ge=0.0, le=1.0)
+    spatial_scale: float = Field(default=0.5, ge=0.0, le=1.0)
+    openness: float = Field(default=0.5, ge=0.0, le=1.0)
+    style: float = Field(default=0.5, ge=0.0, le=1.0)
+    ornateness: float = Field(default=0.5, ge=0.0, le=1.0)
+    orderliness: float = Field(default=0.5, ge=0.0, le=1.0)
+    emotion_intensity: float = Field(default=0.5, ge=0.0, le=1.0)
+    warmth: float = Field(default=0.5, ge=0.0, le=1.0)
+    material_roughness: float = Field(default=0.5, ge=0.0, le=1.0)
+    decay: float = Field(default=0.5, ge=0.0, le=1.0)
+    era_feel: float = Field(default=0.5, ge=0.0, le=1.0)
+    industrialness: float = Field(default=0.5, ge=0.0, le=1.0)
+    religiousness: float = Field(default=0.5, ge=0.0, le=1.0)
+    fantasy_level: float = Field(default=0.5, ge=0.0, le=1.0)
+    sci_fi_level: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class DimensionCenter(BaseModel):
+    """A single dimension's center value and weight for scoring."""
+    dimension: str
+    center: float = Field(default=0.5, ge=0.0, le=1.0)
+    weight: float = Field(default=1.0, ge=0.0, le=5.0)
+    tolerance: float = Field(default=0.3, ge=0.05, le=1.0)
+    reason: str = ""
+
+
+class BoardCenterValues(BaseModel):
+    """Board-level center values derived from setting text and user feedback."""
+    centers: list[DimensionCenter] = []
+    source: str = "ai_derived"
+    derived_at: str = ""
 
 
 class ImageAnalysis(BaseModel):
@@ -141,6 +198,11 @@ class BoardImage(BaseModel):
     phash: str = ""
     status: str = "candidate"
     categories: list[ImageCategoryScore] = []
+    # New v5 metric fields
+    pixel_metrics: PixelMetrics = Field(default_factory=PixelMetrics)
+    perceptual_dimensions: PerceptualDimensions = Field(default_factory=PerceptualDimensions)
+    dimension_distance_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Legacy fields — kept for migration, no longer used for scoring
     visual_metrics: VisualMetrics = Field(default_factory=VisualMetrics)
     curation_scores: CurationScores = Field(default_factory=CurationScores)
     analysis: ImageAnalysis = Field(default_factory=ImageAnalysis)
@@ -213,6 +275,7 @@ class Board(BaseModel):
     setting_text: str = ""
     visual_goal_summary: str = ""
     style_profile: StyleProfile = Field(default_factory=StyleProfile)
+    center_values: BoardCenterValues = Field(default_factory=BoardCenterValues)
     reference_tracks: list[ReferenceTrack] = []
     images: list[BoardImage] = []
     sections: list[BoardSection] = []
@@ -262,3 +325,4 @@ class SettingParseResult(BaseModel):
     style_profile: StyleProfile = Field(default_factory=StyleProfile)
     avoid_directions: list[str] = []
     clarification_questions: list[str] = []
+    center_values: BoardCenterValues = Field(default_factory=BoardCenterValues)
