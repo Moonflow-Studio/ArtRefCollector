@@ -140,22 +140,85 @@ uv run python run.py store --session <session_id> --board "<board_id>"
 ### Step 5: parse — 设定解析
 
 ```bash
+# 方式一：交互式输入
 uv run python run.py parse --board <board_id>
+
+# 方式二：从文件读取
+uv run python run.py parse --board <board_id> --file setting.txt
+
+# 方式三：直接传入
+uv run python run.py parse --board <board_id> --setting "场景设定文本..."
+
+# 指定 Board 名称（不指定则取设定文本前 30 字符）
+uv run python run.py parse --board <board_id> --name "S3 屏蔽室" --file setting.txt
 ```
 
-**做什么**：通过 LLM 将自由文本的场景设定解析为结构化的视觉需求。需要 Cherry Studio。
+**做什么**：将自由文本的场景设定通过 LLM 解析为结构化视觉需求。需要 Cherry Studio。
 
-**输入**：交互式输入设定文本（如 "S3 屏蔽室是一个废弃的地下屏蔽室..."）。
+**LLM 的工作**：调用 `analyze/setting_parser.py`，将设定文本发给 LLM，要求其输出结构化 JSON：
+
+1. **`core_concepts`** — 核心视觉概念（英文关键词，可直接用于搜索）
+   - 从设定文本中提取关键视觉元素，翻译为英文搜索词
+   - 例如："混凝土走廊" → `brutalist concrete corridor`
+
+2. **`visual_dimensions`** — 涉及的功能维度，从以下分类中选取：
+   - mood（氛围）、architecture（建筑）、interior（室内）、materials（材质）
+   - color_lighting（色彩光照）、composition（构图）、props（道具）
+   - costume_character（角色）、tech_machinery（机械）、landscape（自然）等
+
+3. **`known_references`** — 设定中**明确提到**的参考来源
+   - 例如："参考 Control 的 Brutalist 风格" → `Control game brutalist architecture`
+
+4. **`implicit_references`** — 设定中**隐含但未明说**的参考来源
+   - 例如："地下掩体、压抑氛围" → 隐含参考切尔诺贝利、核掩体等
+
+5. **`missing_references`** — 设定中**缺失但需要**的参考
+   - 例如：设定描述了建筑但没提家具 → 缺少室内道具参考
+
+6. **`style_profile`** — 各维度的风格标签：
+   - `mood`：氛围关键词（如 oppressive, mysterious, sterile）
+   - `architecture`：建筑风格（如 brutalist, industrial, sci-fi）
+   - `color`：色彩方向（如 cold blue-gray, fluorescent accent）
+   - `materials`：材质关键词（如 concrete, rusted metal, peeling paint）
+   - `lighting`：光照风格（如 harsh fluorescent, volumetric fog）
+   - `composition`：构图偏好（如 claustrophobic framing, vanishing point）
+   - `avoid`：应避免的方向（如 anime, cartoon, bright colors）
+
+7. **`clarification_questions`** — 需要用户进一步澄清的问题
 
 **产出**：
-- `visual_goal_summary`：视觉目标摘要（一句话概括视觉方向）
-- `setting_text`：原始设定文本（保存备查）
-- `style_profile`：结构化风格要求（色彩、构图、建筑、氛围等维度）
+- `data/boards/<board_id>/parse_result.json` — 完整解析结果
+- Board 数据中保存 `visual_goal_summary`、`setting_text`、`style_profile`
 
-**示例设定文本**：
+**示例**：
+
+输入设定：
 > S3 屏蔽室是一个位于地下的废弃屏蔽室，内部空间狭长，混凝土墙面斑驳，
 > 有工业管道和金属栏杆。氛围压抑、神秘，有科幻感。冷色调为主，
 > 偶有荧光灯的暖光点缀。
+
+解析产出（节选）：
+```json
+{
+  "core_concepts": ["underground bunker", "concrete interior", "industrial corridor", "sci-fi bunker"],
+  "known_references": [],
+  "implicit_references": ["Chernobyl control room", "nuclear bunker", "Stranger Things lab"],
+  "missing_references": ["emergency signage", "ventilation systems", "blast doors"],
+  "style_profile": {
+    "mood": ["oppressive", "mysterious", "sterile", "abandoned"],
+    "architecture": ["brutalist", "utilitarian", "underground"],
+    "color": ["cold blue-gray", "concrete", "fluorescent warm accent"],
+    "materials": ["raw concrete", "rusted metal", "peeling paint"],
+    "lighting": ["harsh fluorescent", "volumetric dust"],
+    "composition": ["claustrophobic", "vanishing point corridor"],
+    "avoid": ["bright colors", "fantasy", "clean pristine"]
+  },
+  "clarification_questions": [
+    "这个空间是否仍在使用中还是完全废弃？",
+    "是否有科幻元素（如全息屏幕、能量管道）？"
+  ]
+}
+```
 
 ---
 
@@ -165,50 +228,149 @@ uv run python run.py parse --board <board_id>
 uv run python run.py plan --board <board_id>
 ```
 
-**做什么**：根据设定的视觉目标和风格要求，通过 LLM 生成多条搜索轨道（Reference Track）。需要 Cherry Studio。
+**做什么**：根据 parse 步骤的结构化视觉需求，通过 LLM 生成多条搜索轨道（Reference Track）。需要 Cherry Studio。
 
-每条搜索轨道包含：
-- 搜索关键词（英文）
-- 目标图片数量
-- 搜索目的说明（如 "寻找混凝土建筑内部参考"）
+**LLM 的工作**：调用 `analyze/reference_planner.py`，将 parse 结果发给 LLM，要求其生成可执行的搜索计划。
 
-**产出**：在 Board 数据中创建 Reference Track 记录。
+每条搜索轨道包含以下字段：
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `name` | 参考线索名称 | "混凝土走廊内部" |
+| `source_type` | 来源类型 | `architecture_style` / `real_world_location` / `concept_art_reference` 等 |
+| `description` | 为什么需要这个参考 | "核心空间参考，决定玩家第一印象" |
+| `target_categories` | 服务的功能分类 | `["interior", "architecture"]` |
+| `search_queries` | 搜索查询词（≥3个） | 见下方 |
+| `negative_queries` | 负向过滤词 | `["cartoon", "anime", "logo"]` |
+| `expected_visual_features` | 预期视觉特征 | `["long corridor", "concrete walls", "fluorescent lights"]` |
+| `relation_to_setting` | 与设定的关系 | "直接对应S3的核心空间" |
+
+**搜索查询词的设计**：
+
+每个 track 会生成至少 3 个查询词，覆盖两类参考：
+
+1. **现实参考查询**（real world reference）：
+   - 寻找真实世界中存在的对应场景照片
+   - 例如：`abandoned nuclear bunker interior photo`、`brutalist concrete corridor photography`
+
+2. **美术设计查询**（concept art reference）：
+   - 寻找游戏/电影/概念美术中的类似设计
+   - 例如：`sci-fi bunker concept art`、`underground facility game art`
+
+**负向过滤词**：
+
+每条轨道自带默认的排除词：`cartoon, anime, logo, product, meme, low resolution, stock photo, watermark, toy`。LLM 可根据具体需求添加额外的排除词（如 `bright colors, clean, modern office`）。
+
+**产出**：
+- `data/boards/<board_id>/reference_tracks.json` — 所有搜索轨道
+- Board 数据中保存 `reference_tracks`
 
 **示例产出**：
-| Track | 关键词 | 数量 | 目的 |
-|-------|--------|------|------|
-| T1 | brutalist concrete corridor interior | 8 | 混凝土走廊内部 |
-| T2 | industrial tunnel fluorescent lighting | 6 | 工业隧道荧光灯 |
-| T3 | abandoned bunker sci-fi | 5 | 废弃掩体科幻感 |
+```json
+[
+  {
+    "name": "混凝土走廊空间",
+    "source_type": "architecture_style",
+    "search_queries": [
+      "brutalist concrete corridor interior photography",
+      "underground bunker tunnel fluorescent lights",
+      "sci-fi facility corridor concept art"
+    ],
+    "negative_queries": ["cartoon", "anime", "clean office", "bright"],
+    "target_categories": ["interior", "architecture"],
+    "expected_visual_features": ["long corridor", "concrete walls", "fluorescent lights", "industrial details"]
+  },
+  {
+    "name": "工业细节与管道",
+    "source_type": "real_world_object",
+    "search_queries": [
+      "industrial pipes metal railings abandoned",
+      "factory ventilation ducts rusted texture",
+      "power plant machinery detail reference"
+    ],
+    "negative_queries": ["cartoon", "modern", "clean"],
+    "target_categories": ["materials", "tech_machinery"],
+    "expected_visual_features": ["metal pipes", "gratings", "cables", "rust textures"]
+  }
+]
+```
 
 ---
 
-### Step 7: analyze-board — Board 图片分析
+### 搜索与迭代
+
+plan 步骤产出的每条搜索轨道包含多个 `search_queries`，用户需要使用这些查询词执行搜索：
+
+```bash
+# 对每条轨道的每个查询词执行搜索
+uv run python run.py search "brutalist concrete corridor interior photography" --max 10 --type photo
+uv run python run.py search "underground bunker tunnel fluorescent lights" --max 10 --type photo
+uv run python run.py search "sci-fi facility corridor concept art" --max 10 --type photo
+
+# 下载、去重、导入
+uv run python run.py download --session <session_1>
+uv run python run.py download --session <session_2>
+uv run python run.py download --session <session_3>
+uv run python run.py dedup --session <session_1> --clip
+uv run python run.py dedup --session <session_2> --clip
+uv run python run.py dedup --session <session_3> --clip
+uv run python run.py store --session <session_1> --board "S3_屏蔽室"
+uv run python run.py store --session <session_2> --board "S3_屏蔽室"
+uv run python run.py store --session <session_3> --board "S3_屏蔽室"
+```
+
+**搜索技巧**：
+- 使用英文关键词效果最好（plan 生成的查询词已经是英文）
+- `--type photo` 过滤照片类结果，`--type clipart` 适合找插图类参考
+- `--layout Wide` 适合找宽幅场景，`--layout Tall` 适合找竖构图
+- 如果某个查询词结果不理想，可以微调关键词后重新搜索
+- 多条轨道的结果可以合并到同一个 Board
+
+**迭代流程**：完成一轮搜索 → analyze-board → rank → compose 后，compose 步骤会输出 `missing_needs`（缺失的参考方向）和 `next_search_suggestions`（下一轮搜索建议）。根据这些建议回到搜索步骤补充图片。
+
+---
+
+### Step 7: analyze-board — Board 图片分析（搜索结果筛选）
 
 ```bash
 uv run python run.py analyze-board --board <board_id>
 ```
 
-**做什么**：对 Board 中的每张图片进行深度视觉分析。需要 Cherry Studio。
+**做什么**：对 Board 中的每张图片进行深度视觉分析，**这是搜索结果的自动筛选机制**。需要 Cherry Studio。
 
-这是最核心的分析步骤，一次调用完成：
+搜索步骤导入的图片是未经筛选的原始结果。analyze-board 通过 VLM 对每张图片进行上下文感知分析，自动判断图片是否与 Board 的设定相关、质量如何、适合作为哪种参考。
 
-1. **视觉指标**（15 维）：
-   - 像素计算：brightness, saturation, warmth, contrast, color_complexity, detail_density
+**分析过程**（每张图片调用一次 VLM，传入图片 + Board 设定文本 + 风格要求）：
+
+1. **相关性评估**：
+   - `relevance_score`（0-1）：与设定文本的视觉相关程度
+   - `is_relevant`（bool）：是否推荐保留
+   - `final_recommendation`：`core` / `reference` / `supplement` / `reject`
+
+2. **评选分数**（8 维，均为 0-1）：
+   - `design_reference_score`：作为设计参考的价值
+   - `aesthetic_score`：美观程度
+   - `composition_score`：构图质量
+   - `lighting_score`：光照质量
+   - `style_consistency_score`：与设定风格的一致性
+   - `uniqueness_score`：独特性（避免千篇一律）
+   - `usability_score`：可操作性（能否直接用于设计）
+   - `risk_score`：风险度（是否可能引入不想要的方向）
+
+3. **视觉指标**（15 维）：
+   - 像素自动计算：brightness, saturation, warmth, contrast, color_complexity, detail_density
    - VLM 评分：shot_scale, openness, monumentality, religiousness, industrialness, decay, orderliness, fantasy_level, sci_fi_level
 
-2. **评选分数**（8 维）：aesthetic_score, composition_score, lighting_score, design_reference_score, style_consistency_score, uniqueness_score, usability_score, risk_score
+4. **功能分类建议**：
+   - 根据图片内容自动分配到功能分类（建筑/氛围/材质/色彩/构图等）
+   - 每个分类带置信度分数
 
-3. **相关性分析**：
-   - 与设定文本的相关性评分（0-1）
-   - 是否推荐作为参考（推荐/核心/补充/排除）
-   - 推荐的功能分类（建筑、氛围、材质等）
+5. **文字描述**：视觉摘要、可用元素、风格标签、风险提示
 
-4. **文字描述**：
-   - 视觉摘要
-   - 可用元素列表
-   - 风格标签
-   - 风险提示
+**筛选如何生效**：analyze-board 的产出供下一步 rank 使用。rank 步骤根据 `relevance_score` 和 `design_reference_score` 的阈值自动排除不相关图片，根据综合评分自动分级（核心/精选/补充/排除）。用户无需手动筛选每张图片。
+
+**参数**：
+- `--status`：只分析指定状态的图片（默认 `candidate`，即只分析未分析过的）
 
 **产出**：每张图片的 `visual_metrics`、`curation_scores`、`analysis` 写入数据库。
 
