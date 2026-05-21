@@ -54,6 +54,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 .img-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px var(--accent-glow); }
 .img-card img { width: 100%; display: block; object-fit: cover; background: #111; min-height: 80px; }
 .img-card .score { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.75); color: var(--accent); font-size: 12px; font-weight: 700; padding: 1px 7px; border-radius: 6px; }
+.img-card .tier-badge { position: absolute; top: 6px; left: 6px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; letter-spacing: 0.5px; }
 .img-card .overlay { position: absolute; bottom: 0; left: 0; right: 0; padding: 24px 10px 8px; background: linear-gradient(transparent, rgba(0,0,0,0.85)); opacity: 0; transition: opacity 0.2s; }
 .img-card:hover .overlay { opacity: 1; }
 .img-card .overlay .tag { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 6px; background: rgba(233,69,96,0.25); color: #f0a0b0; margin: 1px 2px; }
@@ -198,6 +199,32 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 #boardInfoPanel .info-setting-toggle:hover { text-decoration: underline; }
 #boardInfoPanel .info-setting { font-size: 11px; color: #666; line-height: 1.5; max-height: 300px; overflow-y: auto; white-space: pre-wrap; }
 
+/* ── Scoring panel ── */
+#scoringPanel {
+  position: fixed; top: 16px; right: 296px; z-index: 1000;
+  background: rgba(22,22,22,0.95); backdrop-filter: blur(12px);
+  border-radius: 12px; border: 1px solid var(--border);
+  padding: 16px; width: 320px; display: none;
+  max-height: calc(100vh - 100px); overflow-y: auto;
+}
+#scoringPanel.visible { display: block; }
+#scoringPanel h3 { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.scoring-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.scoring-row .sw-label { min-width: 70px; color: var(--text-dim); }
+.scoring-row .sw-slider { flex: 1; accent-color: var(--accent); height: 3px; }
+.scoring-row .sw-val { min-width: 36px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.scoring-sep { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+.scoring-section-label { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin: 8px 0 4px; }
+.scoring-sum { font-size: 11px; color: var(--text-dim); margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.scoring-actions { display: flex; gap: 8px; margin-top: 10px; }
+.scoring-actions button {
+  flex: 1; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 11px;
+  border: 1px solid var(--border); background: none; color: var(--text);
+}
+.scoring-actions button:hover { background: var(--border); }
+.scoring-actions .btn-recompute { border-color: var(--accent); color: var(--accent); }
+.scoring-actions .btn-recompute:hover { background: rgba(233,69,96,0.15); }
+
 /* ── Board selector modal ── */
 #boardModal {
   display: none; position: fixed; inset: 0; z-index: 4000;
@@ -288,6 +315,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   <div id="boardInfoContent"></div>
 </div>
 
+<div id="scoringPanel">
+  <h3>评分权重</h3>
+  <div id="scoringPanelContent"></div>
+</div>
+
 <div id="toolbar">
   <button id="btnZoomOut">-</button>
   <span id="zoomLabel">100%</span>
@@ -302,6 +334,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   <button id="btnAxes">Axes</button>
   <button id="btnMinimap">Map</button>
   <button id="btnBoardInfo" style="display:none">Info</button>
+  <button id="btnScoring" style="display:none">Score</button>
 </div>
 
 <div id="minimap"><canvas id="minimapCanvas"></canvas></div>
@@ -312,31 +345,32 @@ const COL_SPACING = 200;
 const API_BASE = 'http://localhost:8765';
 
 const METRIC_DEFS = {
-  brightness:        { label: 'Brightness',    axis: '暗 ↔ 亮',       group: 'pixel' },
-  saturation:        { label: 'Saturation',    axis: '灰 ↔ 鲜艳',     group: 'pixel' },
-  color_temperature: { label: 'Color Temp',    axis: '冷 ↔ 暖',       group: 'pixel' },
-  dominant_hue:      { label: 'Dominant Hue',  axis: '蓝绿 ↔ 红黄',   group: 'pixel' },
-  contrast:          { label: 'Contrast',      axis: '柔和 ↔ 强对比',  group: 'pixel' },
-  color_complexity:  { label: 'Color Cmplx',   axis: '单纯 ↔ 丰富',   group: 'pixel' },
-  edge_density:      { label: 'Edge Density',  axis: '简洁 ↔ 复杂',   group: 'pixel' },
-  texture_complexity:{ label: 'Texture',       axis: '平滑 ↔ 粗糙',   group: 'pixel' },
-  composition_x:     { label: 'Compos X',      axis: '左 ↔ 右',       group: 'pixel' },
-  composition_y:     { label: 'Compos Y',      axis: '上 ↔ 下',       group: 'pixel' },
-  spatial_openness:  { label: 'Openness',      axis: '封闭 ↔ 开阔',   group: 'pixel' },
-  shot_scale:        { label: 'Shot Scale',    axis: '远景 ↔ 特写',   group: 'subjective' },
-  spatial_scale:     { label: 'Spatial Scale', axis: '私密 ↔ 宏大',   group: 'subjective' },
-  emotion_intensity: { label: 'Emotion',       axis: '平静 ↔ 紧张',   group: 'subjective' },
-  oppression:        { label: 'Oppression',    axis: '开放 ↔ 压迫',   group: 'subjective' },
-  religiousness:     { label: 'Religiousness', axis: '弱 ↔ 强',       group: 'subjective' },
-  industrialness:    { label: 'Industrial',    axis: '弱 ↔ 强',       group: 'subjective' },
-  fantasy_level:     { label: 'Fantasy',       axis: '现实 ↔ 奇幻',   group: 'subjective' },
-  sci_fi_level:      { label: 'Sci-Fi',        axis: '现实 ↔ 科幻',   group: 'subjective' },
-  decay_level:       { label: 'Decay',         axis: '完整 ↔ 破败',   group: 'subjective' },
-  orderliness:       { label: 'Order',         axis: '混乱 ↔ 规整',   group: 'subjective' },
-  ornateness:        { label: 'Ornateness',    axis: '朴素 ↔ 华丽',   group: 'subjective' },
-  material_roughness:{ label: 'Roughness',     axis: '精致 ↔ 粗粝',   group: 'subjective' },
-  era_feel:          { label: 'Era',           axis: '古典 ↔ 未来',   group: 'subjective' },
-  reference_value:   { label: 'Ref Value',     axis: '弱 ↔ 强参考',   group: 'subjective' },
+  // VisualMetrics (pixel-level)
+  brightness:        { label: '亮度',       axis: '暗 ↔ 亮',       group: 'pixel' },
+  saturation:        { label: '饱和度',     axis: '灰 ↔ 鲜艳',     group: 'pixel' },
+  warmth:            { label: '色温',       axis: '冷 ↔ 暖',       group: 'pixel' },
+  contrast:          { label: '对比度',     axis: '柔和 ↔ 强对比',  group: 'pixel' },
+  color_complexity:  { label: '色彩复杂度', axis: '单纯 ↔ 丰富',   group: 'pixel' },
+  detail_density:    { label: '细节密度',   axis: '简洁 ↔ 复杂',   group: 'pixel' },
+  openness:          { label: '开阔度',     axis: '封闭 ↔ 开阔',   group: 'pixel' },
+  // VisualMetrics (subjective)
+  shot_scale:        { label: '景别',       axis: '远景 ↔ 特写',   group: 'subjective' },
+  monumentality:     { label: '尺度感',     axis: '私密 ↔ 宏大',   group: 'subjective' },
+  religiousness:     { label: '宗教感',     axis: '弱 ↔ 强',       group: 'subjective' },
+  industrialness:    { label: '工业感',     axis: '弱 ↔ 强',       group: 'subjective' },
+  decay:             { label: '破败度',     axis: '完整 ↔ 破败',   group: 'subjective' },
+  orderliness:       { label: '秩序感',     axis: '混乱 ↔ 规整',   group: 'subjective' },
+  fantasy_level:     { label: '奇幻感',     axis: '现实 ↔ 奇幻',   group: 'subjective' },
+  sci_fi_level:      { label: '科幻感',     axis: '现实 ↔ 科幻',   group: 'subjective' },
+  // CurationScores
+  aesthetic_score:             { label: '美观度',     axis: '低 ↔ 高', group: 'curation' },
+  composition_score:           { label: '构图质量',   axis: '低 ↔ 高', group: 'curation' },
+  lighting_score:              { label: '光照质量',   axis: '低 ↔ 高', group: 'curation' },
+  design_reference_score:      { label: '设计参考度', axis: '低 ↔ 高', group: 'curation' },
+  style_consistency_score:     { label: '风格一致性', axis: '低 ↔ 高', group: 'curation' },
+  uniqueness_score:            { label: '独特性',     axis: '低 ↔ 高', group: 'curation' },
+  usability_score:             { label: '可用性',     axis: '低 ↔ 高', group: 'curation' },
+  risk_score:                  { label: '风险',       axis: '低 ↔ 高', group: 'curation' },
 };
 
 // ── State ──
@@ -351,6 +385,31 @@ let scatterTitleX = null, scatterTitleY = null;
 let apiAvailable = false;
 let currentBoard = null;  // Loaded board data for Board mode
 let pendingOrders = {};   // section_id -> [img_ids] for unsaved reorder
+
+const TIER_DEFS = {
+  core:       { label: '核心', color: '#e94560', bg: 'rgba(233,69,96,0.25)' },
+  curated:    { label: '精选', color: '#3cb878', bg: 'rgba(60,184,120,0.20)' },
+  supplement: { label: '补充', color: '#4a90d9', bg: 'rgba(74,144,217,0.20)' },
+  outlier:    { label: '异常', color: '#d4a03c', bg: 'rgba(212,160,60,0.20)' },
+  candidate:  { label: '待审', color: '#888',    bg: 'rgba(136,136,136,0.15)' },
+  rejected:   { label: '排除', color: '#666',    bg: 'rgba(102,102,102,0.15)' },
+  duplicate:  { label: '重复', color: '#555',    bg: 'rgba(85,85,85,0.10)' },
+};
+
+const DEFAULT_WEIGHTS = {
+  relevance: 0.18, design_reference: 0.16, aesthetic: 0.14,
+  composition: 0.10, lighting: 0.10, style_consistency: 0.14,
+  usability: 0.08, uniqueness: 0.06, source_quality: 0.04,
+  risk_penalty: 0.08, duplicate_penalty: 0.10,
+};
+const WEIGHT_LABELS = {
+  relevance: '相关性', design_reference: '设计参考', aesthetic: '美观度',
+  composition: '构图', lighting: '光照', style_consistency: '风格一致',
+  usability: '可用性', uniqueness: '独特性', source_quality: '来源质量',
+  risk_penalty: '风险惩罚', duplicate_penalty: '重复惩罚',
+};
+let scoringWeights = JSON.parse(localStorage.getItem('scoringWeights')) || {...DEFAULT_WEIGHTS};
+let scoringVisible = false;
 
 const viewport = document.getElementById('viewport');
 const world = document.getElementById('world');
@@ -551,6 +610,18 @@ function loadBoardData(data, boardId, fileMap) {
     resolver: resolver,
   };
   pendingOrders = {};
+
+  // Populate allImages for scatter/metric access
+  allImages = (data.images || []).map(img => ({
+    img,
+    col: {
+      id: resolvedBoardId,
+      name: data.name || data.id,
+      visible: true,
+      resolver: () => resolver(img),
+      color: '#e94560',
+    }
+  }));
 
   layoutMode = 'board';
   updateModeButtons();
@@ -758,10 +829,10 @@ function createBoardCard(img, board) {
   const card = document.createElement('div');
   card.className = 'img-card';
   const src = board.resolver ? board.resolver(img) : (img.local_path || '');
-  const score = img.final_score || img.quality_score || 0;
+  const tier = TIER_DEFS[img.status] || TIER_DEFS.candidate;
   const cats = (img.categories || []).slice(0, 2).map(c => c.category).join(', ');
   card.innerHTML = `<img src="${src}" loading="lazy" alt="">
-    ${score ? `<span class="score">${score.toFixed(2)}</span>` : ''}
+    <span class="tier-badge" style="background:${tier.bg};color:${tier.color}">${tier.label}</span>
     <div class="overlay">${cats ? `<span class="tag">${cats}</span>` : ''}</div>`;
   card.addEventListener('click', (e) => {
     if (!e.defaultPrevented) openDetail(img, src);
@@ -794,6 +865,86 @@ function updateBoardInfoPanel() {
       toggle.textContent = vis ? 'Show setting text' : 'Hide setting text';
     });
   }
+}
+
+// ── Scoring Engine ──
+function computeFinalScore(img) {
+  const w = scoringWeights;
+  const cs = img.curation_scores || {};
+  const a = (img.analysis || {});
+  return Math.max(0, Math.min(1,
+    w.relevance * (a.relevance_score || 0)
+    + w.design_reference * (cs.design_reference_score || 0)
+    + w.aesthetic * (cs.aesthetic_score || 0)
+    + w.composition * (cs.composition_score || 0)
+    + w.lighting * (cs.lighting_score || 0)
+    + w.style_consistency * (cs.style_consistency_score || 0)
+    + w.usability * (cs.usability_score || 0)
+    + w.uniqueness * (cs.uniqueness_score || 0)
+    + w.source_quality * (img.source_quality_score || 0)
+    - w.risk_penalty * (cs.risk_score || 0)
+    - w.duplicate_penalty * (img.duplicate_penalty || 0)
+  ));
+}
+
+function assignStatus(img, finalScore) {
+  if (img.status === 'duplicate') return 'duplicate';
+  const a = img.analysis || {};
+  if (a.is_relevant === false || a.final_recommendation === 'reject') return 'rejected';
+  const cs = img.curation_scores || {};
+  if ((a.relevance_score || 0) < 0.45 || (cs.design_reference_score || 0) < 0.35) return 'rejected';
+  if (finalScore >= 0.82 && (cs.style_consistency_score || 0) >= 0.70) return 'core';
+  if (finalScore >= 0.68) return 'curated';
+  if ((cs.style_consistency_score || 0) <= 0.40 && (a.relevance_score || 0) >= 0.60) return 'outlier';
+  if (finalScore >= 0.50) return 'supplement';
+  return 'rejected';
+}
+
+function recomputeScores() {
+  if (!currentBoard) return;
+  currentBoard.images.forEach(img => {
+    img.final_score = computeFinalScore(img);
+    img.status = assignStatus(img, img.final_score);
+  });
+  renderBoard();
+  localStorage.setItem('scoringWeights', JSON.stringify(scoringWeights));
+}
+
+function updateScoringPanel() {
+  const content = document.getElementById('scoringPanelContent');
+  if (!content) return;
+  const w = scoringWeights;
+  const positiveKeys = ['relevance','design_reference','aesthetic','composition','lighting','style_consistency','usability','uniqueness','source_quality'];
+  const penaltyKeys = ['risk_penalty','duplicate_penalty'];
+  const posSum = positiveKeys.reduce((s,k) => s + w[k], 0);
+  let html = '<div class="scoring-section-label">正向权重</div>';
+  positiveKeys.forEach(k => {
+    html += `<div class="scoring-row"><span class="sw-label">${WEIGHT_LABELS[k]}</span><input type="range" class="sw-slider" min="0" max="0.5" step="0.01" value="${w[k]}" data-key="${k}"><span class="sw-val">${w[k].toFixed(2)}</span></div>`;
+  });
+  html += `<hr class="scoring-sep"><div class="scoring-section-label">惩罚权重</div>`;
+  penaltyKeys.forEach(k => {
+    html += `<div class="scoring-row"><span class="sw-label">${WEIGHT_LABELS[k]}</span><input type="range" class="sw-slider" min="0" max="0.5" step="0.01" value="${w[k]}" data-key="${k}"><span class="sw-val">${w[k].toFixed(2)}</span></div>`;
+  });
+  html += `<div class="scoring-sum">正向权重总和: <span style="color:${Math.abs(posSum-1.0)<0.01?'var(--success)':'var(--warn)'}">${posSum.toFixed(2)}</span></div>`;
+  html += `<div class="scoring-actions"><button class="btn-reset-w">重置默认</button><button class="btn-recompute">重新计算</button></div>`;
+  content.innerHTML = html;
+  // Wire sliders
+  content.querySelectorAll('.sw-slider').forEach(slider => {
+    slider.addEventListener('input', () => {
+      const key = slider.dataset.key;
+      scoringWeights[key] = parseFloat(slider.value);
+      slider.nextElementSibling.textContent = scoringWeights[key].toFixed(2);
+      // Update sum
+      const sum = positiveKeys.reduce((s,k) => s + scoringWeights[k], 0);
+      const sumEl = content.querySelector('.scoring-sum span');
+      if (sumEl) { sumEl.textContent = sum.toFixed(2); sumEl.style.color = Math.abs(sum-1.0)<0.01 ? 'var(--success)' : 'var(--warn)'; }
+    });
+  });
+  content.querySelector('.btn-reset-w').addEventListener('click', () => {
+    scoringWeights = {...DEFAULT_WEIGHTS};
+    updateScoringPanel();
+  });
+  content.querySelector('.btn-recompute').addEventListener('click', recomputeScores);
 }
 
 // Global img error handler — show placeholder on load failure
@@ -955,9 +1106,9 @@ function buildAxesPanel() {
   const content = document.getElementById('axesPanelContent');
   const metrics = getAvailableMetrics();
   if (!metrics.length) { content.innerHTML = '<div style="color:#664;font-size:12px;padding:12px 0;text-align:center">No metrics data found.</div>'; return; }
-  const pxOpts = metrics.filter(k => METRIC_DEFS[k]?.group==='pixel'), sbOpts = metrics.filter(k => METRIC_DEFS[k]?.group==='subjective');
+  const pxOpts = metrics.filter(k => METRIC_DEFS[k]?.group==='pixel'), sbOpts = metrics.filter(k => METRIC_DEFS[k]?.group==='subjective'), crOpts = metrics.filter(k => METRIC_DEFS[k]?.group==='curation');
   function opts(keys, label) { return keys.length ? `<optgroup label="${label}">${keys.map(k=>`<option value="${k}">${METRIC_DEFS[k].label} (${METRIC_DEFS[k].axis})</option>`).join('')}</optgroup>` : ''; }
-  const all = opts(pxOpts,'Pixel') + opts(sbOpts,'Subjective');
+  const all = opts(pxOpts,'视觉指标') + opts(sbOpts,'感知维度') + opts(crOpts,'评选分数');
   content.innerHTML = `<div class="axis-select-group"><label>X-Axis</label><select id="selX">${all}</select><div class="axis-info" id="infoX"></div></div><div class="axis-select-group"><label>Y-Axis</label><select id="selY">${all}</select><div class="axis-info" id="infoY"></div></div>`;
   const selX = document.getElementById('selX'), selY = document.getElementById('selY');
   if ([...selX.options].some(o=>o.value===selectedX)) selX.value = selectedX;
@@ -977,9 +1128,11 @@ function updateAxisInfo() {
 function openDetail(img, src) {
   document.getElementById('detail-img').src = src;
   document.getElementById('detailDesc').textContent = img.description || '';
-  const score = img.score || img.quality_score || img.final_score || 0;
+  const finalScore = img.final_score || img.score || img.quality_score || 0;
+  const tier = TIER_DEFS[img.status] || TIER_DEFS.candidate;
   const parts = [];
-  if (score) parts.push(`<span>Score: ${typeof score === 'number' ? score.toFixed(2) : score}</span>`);
+  parts.push(`<span class="tier-badge" style="background:${tier.bg};color:${tier.color};position:static;display:inline-block">${tier.label}</span>`);
+  if (finalScore) parts.push(`<span>Score: ${typeof finalScore === 'number' ? finalScore.toFixed(3) : finalScore}</span>`);
   if (img.mood) parts.push(`<span>${img.mood}</span>`);
   if (img.style) parts.push(`<span>${img.style}</span>`);
   if (img.analysis && img.analysis.visual_summary) parts.push(`<span>${img.analysis.visual_summary.substring(0,80)}</span>`);
@@ -987,12 +1140,44 @@ function openDetail(img, src) {
   const tags = img.tags || (img.analysis ? img.analysis.style_tags : []) || [];
   document.getElementById('detailTags').innerHTML = tags.map(t=>`<span>${t}</span>`).join('');
   const md = document.getElementById('detail-metrics'); md.innerHTML = '';
-  const vm = img.visual_metrics || (img.analysis ? {} : {});
-  const curation = img.curation_scores || {};
-  const allM = {...vm, ...curation};
-  Object.entries(allM).filter(([k,v])=>v!=null).sort((a,b)=>b[1]-a[1]).slice(0,15).forEach(([k,v])=>{
-    const d = METRIC_DEFS[k] || { label: k, axis: '' };
-    md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${d.axis}">${d.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(v*100)}%"></div></div><span class="bar-val">${typeof v==='number'?v.toFixed(2):v}</span></div>`;
+  // Visual metrics section
+  const vm = img.visual_metrics || {};
+  const vmEntries = Object.entries(vm).filter(([k,v])=>v!=null && v!==0.5).sort((a,b)=>Math.abs(b[1]-0.5)-Math.abs(a[1]-0.5));
+  if (vmEntries.length) {
+    md.innerHTML += `<div style="font-size:10px;color:#555;margin:6px 0 4px;text-transform:uppercase;letter-spacing:0.5px">视觉指标</div>`;
+    vmEntries.forEach(([k,v])=>{
+      const d = METRIC_DEFS[k] || { label: k, axis: '' };
+      md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${d.axis}">${d.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(v*100)}%"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
+    });
+  }
+  // Curation scores with weight contribution
+  const cs = img.curation_scores || {};
+  const w = scoringWeights;
+  const a = img.analysis || {};
+  const contribItems = [
+    { key: 'relevance', val: a.relevance_score || 0, weight: w.relevance, label: '相关性' },
+    { key: 'design_reference_score', val: cs.design_reference_score || 0, weight: w.design_reference, label: '设计参考' },
+    { key: 'aesthetic_score', val: cs.aesthetic_score || 0, weight: w.aesthetic, label: '美观度' },
+    { key: 'composition_score', val: cs.composition_score || 0, weight: w.composition, label: '构图' },
+    { key: 'lighting_score', val: cs.lighting_score || 0, weight: w.lighting, label: '光照' },
+    { key: 'style_consistency_score', val: cs.style_consistency_score || 0, weight: w.style_consistency, label: '风格一致' },
+    { key: 'usability_score', val: cs.usability_score || 0, weight: w.usability, label: '可用性' },
+    { key: 'uniqueness_score', val: cs.uniqueness_score || 0, weight: w.uniqueness, label: '独特性' },
+    { key: 'source_quality', val: img.source_quality_score || 0, weight: w.source_quality, label: '来源质量' },
+  ];
+  const penaltyItems = [
+    { key: 'risk_score', val: cs.risk_score || 0, weight: w.risk_penalty, label: '风险惩罚' },
+    { key: 'duplicate_penalty', val: img.duplicate_penalty || 0, weight: w.duplicate_penalty, label: '重复惩罚' },
+  ];
+  md.innerHTML += `<div style="font-size:10px;color:#555;margin:10px 0 4px;text-transform:uppercase;letter-spacing:0.5px">评分权重分解</div>`;
+  contribItems.forEach(item => {
+    const contrib = item.val * item.weight;
+    md.innerHTML += `<div class="metric-bar"><span class="bar-label">${item.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(item.val*100)}%"></div></div><span class="bar-val" style="color:#aaa">${item.val.toFixed(2)} × ${item.weight.toFixed(2)} = <span style="color:var(--success)">${contrib.toFixed(3)}</span></span></div>`;
+  });
+  md.innerHTML += `<div style="font-size:10px;color:#555;margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.5px">惩罚项</div>`;
+  penaltyItems.forEach(item => {
+    const contrib = item.val * item.weight;
+    md.innerHTML += `<div class="metric-bar"><span class="bar-label">${item.label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(item.val*100)}%;background:#d44"></div></div><span class="bar-val" style="color:#aaa">${item.val.toFixed(2)} × ${item.weight.toFixed(2)} = <span style="color:#d44">-${contrib.toFixed(3)}</span></span></div>`;
   });
   detail.classList.add('active');
 }
@@ -1101,10 +1286,11 @@ function updateModeButtons() {
   document.getElementById('btnScatter').classList.toggle('active', layoutMode==='scatter');
   document.getElementById('btnBoard').classList.toggle('active', layoutMode==='board');
   document.getElementById('btnBoardInfo').style.display = currentBoard ? '' : 'none';
+  document.getElementById('btnScoring').style.display = currentBoard ? '' : 'none';
 }
 document.getElementById('btnGrid').addEventListener('click', () => { layoutMode='grid'; updateModeButtons(); render(); });
 document.getElementById('btnScatter').addEventListener('click', () => {
-  if (!hasMetrics()) { alert('No metrics data in loaded collections.'); return; }
+  if (!hasMetrics() && !(currentBoard && allImages.length)) { alert('No metrics data available.'); return; }
   layoutMode='scatter'; updateModeButtons(); render();
 });
 document.getElementById('btnBoard').addEventListener('click', () => {
@@ -1123,6 +1309,12 @@ document.getElementById('btnBoardInfo').addEventListener('click', () => {
   boardInfoVisible = !boardInfoVisible;
   document.getElementById('boardInfoPanel').classList.toggle('visible', boardInfoVisible);
   document.getElementById('btnBoardInfo').classList.toggle('active', boardInfoVisible);
+});
+document.getElementById('btnScoring').addEventListener('click', () => {
+  scoringVisible = !scoringVisible;
+  document.getElementById('scoringPanel').classList.toggle('visible', scoringVisible);
+  document.getElementById('btnScoring').classList.toggle('active', scoringVisible);
+  if (scoringVisible) updateScoringPanel();
 });
 
 updateModeButtons();
