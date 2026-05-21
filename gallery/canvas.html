@@ -110,9 +110,10 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 #detail-info .desc-text { font-size: 13px; color: #ccc; line-height: 1.5; margin-bottom: 8px; }
 #detail-info .tag-list { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
 #detail-info .tag-list span { font-size: 11px; padding: 3px 8px; border-radius: 8px; background: rgba(233,69,96,0.25); color: #f0a0b0; }
-#detail-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; margin-top: 10px; text-align: left; }
-.metric-bar { display: flex; align-items: center; gap: 6px; font-size: 11px; }
-.metric-bar .bar-label { color: #888; min-width: 60px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#detail-metrics { display: block; margin-top: 10px; text-align: left; }
+.detail-section-header { display: block; width: 100%; }
+.metric-bar { display: flex; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 3px; }
+.metric-bar .bar-label { color: #888; min-width: 72px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .metric-bar .bar-track { flex: 1; height: 4px; background: #222; border-radius: 2px; }
 .metric-bar .bar-fill { height: 100%; border-radius: 2px; background: var(--accent); }
 .metric-bar .bar-val { color: #aaa; min-width: 28px; text-align: right; }
@@ -204,12 +205,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   position: fixed; top: 16px; right: 296px; z-index: 1000;
   background: rgba(22,22,22,0.95); backdrop-filter: blur(12px);
   border-radius: 12px; border: 1px solid var(--border);
-  padding: 16px; width: 320px; display: none;
+  padding: 16px; width: 580px; display: none;
   max-height: calc(100vh - 100px); overflow-y: auto;
 }
 #scoringPanel.visible { display: block; }
 #scoringPanel h3 { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
-.scoring-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.scoring-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; flex-wrap: nowrap; }
 .scoring-row .sw-label { min-width: 70px; color: var(--text-dim); }
 .scoring-row .sw-slider { flex: 1; accent-color: var(--accent); height: 3px; }
 .scoring-row .sw-val { min-width: 36px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -345,32 +346,32 @@ const COL_SPACING = 200;
 const API_BASE = 'http://localhost:8765';
 
 const PIXEL_METRIC_DEFS = {
-  brightness:        { label: '亮度',       axis: '暗 → 亮' },
-  saturation:        { label: '饱和度',     axis: '灰 → 鲜艳' },
-  color_temperature: { label: '色温',       axis: '冷 → 暖' },
-  contrast:          { label: '对比度',     axis: '柔和 → 强对比' },
-  color_complexity:  { label: '色彩丰富度', axis: '单纯 → 丰富' },
-  edge_density:      { label: '边缘密度',   axis: '简洁 → 复杂' },
-  texture_complexity:{ label: '纹理复杂度', axis: '平滑 → 粗糙' },
-  spatial_openness:  { label: '空间开放度', axis: '封闭 → 开阔' },
+  brightness:        { label: '亮度',       axis: '暗 → 亮',           group: 'pixel' },
+  saturation:        { label: '饱和度',     axis: '灰 → 鲜艳',         group: 'pixel' },
+  color_temperature: { label: '色温',       axis: '冷 → 暖',           group: 'pixel' },
+  contrast:          { label: '对比度',     axis: '柔和 → 强对比',     group: 'pixel' },
+  color_complexity:  { label: '色彩丰富度', axis: '单纯 → 丰富',       group: 'pixel' },
+  edge_density:      { label: '边缘密度',   axis: '简洁 → 复杂',       group: 'pixel' },
+  texture_complexity:{ label: '纹理复杂度', axis: '平滑 → 粗糙',       group: 'pixel' },
+  spatial_openness:  { label: '空间开放度', axis: '封闭 → 开阔',       group: 'pixel' },
 };
 
 const PERCEPTUAL_DIM_DEFS = {
-  shot_scale:         { label: '景别',       axis: '远景 → 特写' },
-  spatial_scale:      { label: '空间尺度',   axis: '私密 → 宏大' },
-  openness:           { label: '开放感',     axis: '封闭 → 开阔' },
-  style:              { label: '风格化',     axis: '写实 → 风格化' },
-  ornateness:         { label: '装饰度',     axis: '朴素 → 华丽' },
-  orderliness:        { label: '秩序感',     axis: '混乱 → 规整' },
-  emotion_intensity:  { label: '情绪强度',   axis: '平静 → 强烈' },
-  warmth:             { label: '色温氛围',   axis: '冷酷 → 温暖' },
-  material_roughness: { label: '材质粗度',   axis: '精致 → 粗粝' },
-  decay:              { label: '破败度',     axis: '完好 → 破败' },
-  era_feel:           { label: '时代感',     axis: '古典 → 未来' },
-  industrialness:     { label: '工业感',     axis: '自然 → 工业' },
-  religiousness:      { label: '宗教感',     axis: '世俗 → 神圣' },
-  fantasy_level:      { label: '奇幻程度',   axis: '现实 → 奇幻' },
-  sci_fi_level:       { label: '科幻程度',   axis: '现实 → 科幻' },
+  shot_scale:         { label: '景别',       axis: '远景 → 特写',       group: 'subjective' },
+  spatial_scale:      { label: '空间尺度',   axis: '私密 → 宏大',       group: 'subjective' },
+  openness:           { label: '开放感',     axis: '封闭 → 开阔',       group: 'subjective' },
+  style:              { label: '风格化',     axis: '写实 → 风格化',     group: 'subjective' },
+  ornateness:         { label: '装饰度',     axis: '朴素 → 华丽',       group: 'subjective' },
+  orderliness:        { label: '秩序感',     axis: '混乱 → 规整',       group: 'subjective' },
+  emotion_intensity:  { label: '情绪强度',   axis: '平静 → 强烈',       group: 'subjective' },
+  warmth:             { label: '色温氛围',   axis: '冷酷 → 温暖',       group: 'subjective' },
+  material_roughness: { label: '材质粗度',   axis: '精致 → 粗粝',       group: 'subjective' },
+  decay:              { label: '破败度',     axis: '完好 → 破败',       group: 'subjective' },
+  era_feel:           { label: '时代感',     axis: '古典 → 未来',       group: 'subjective' },
+  industrialness:     { label: '工业感',     axis: '自然 → 工业',       group: 'subjective' },
+  religiousness:      { label: '宗教感',     axis: '世俗 → 神圣',       group: 'subjective' },
+  fantasy_level:      { label: '奇幻程度',   axis: '现实 → 奇幻',       group: 'subjective' },
+  sci_fi_level:       { label: '科幻程度',   axis: '现实 → 科幻',       group: 'subjective' },
 };
 
 // Combined for backward compat (axes panel, etc.)
@@ -851,6 +852,33 @@ function renderBoard() {
     container.appendChild(block);
   });
 
+  // ── Unassigned images: show images not in any section ──
+  const assignedIds = new Set();
+  b.sections.forEach(s => {
+    [...(s.key_images||[]), ...(s.supporting_images||[])].forEach(r => assignedIds.add(r.image_id));
+  });
+  const unassigned = (b.images || []).filter(img => !assignedIds.has(img.id));
+  if (unassigned.length) {
+    const uaBlock = document.createElement('div');
+    uaBlock.className = 'section-block';
+    uaBlock.style.borderColor = '#333';
+    const uaHeader = document.createElement('div');
+    uaHeader.className = 'section-header';
+    uaHeader.innerHTML = `<h3 style="color:#888">未分类 / Unassigned</h3><span class="section-count">${unassigned.length} images</span>`;
+    uaBlock.appendChild(uaHeader);
+    const uaGrid = document.createElement('div');
+    uaGrid.className = 'section-grid';
+    // Sort by score descending
+    unassigned.sort((a,b) => (b.dimension_distance_score || b.final_score || 0) - (a.dimension_distance_score || a.final_score || 0));
+    unassigned.forEach(img => {
+      const card = createBoardCard(img, b);
+      card.dataset.imageId = img.id;
+      uaGrid.appendChild(card);
+    });
+    uaBlock.appendChild(uaGrid);
+    container.appendChild(uaBlock);
+  }
+
   world.appendChild(container);
   updateBoardInfoPanel();
 }
@@ -970,12 +998,12 @@ function updateScoringPanel() {
   if (cv.centers && cv.centers.length > 0) {
     cv.centers.forEach(dc => {
       const def = PERCEPTUAL_DIM_DEFS[dc.dimension] || PIXEL_METRIC_DEFS[dc.dimension] || { label: dc.dimension };
-      html += `<div class="scoring-row" style="flex-wrap:wrap;gap:4px 12px">
-        <span class="sw-label" style="min-width:60px">${def.label}</span>
-        <span class="sw-val" style="min-width:80px">中心: <input type="range" class="center-slider" min="0" max="1" step="0.01" value="${dc.center}" data-dim="${dc.dimension}" data-field="center" style="width:60px;vertical-align:middle"><span class="cv-val">${dc.center.toFixed(2)}</span></span>
-        <span class="sw-val" style="min-width:80px">权重: <input type="range" class="center-slider" min="0" max="5" step="0.1" value="${dc.weight}" data-dim="${dc.dimension}" data-field="weight" style="width:50px;vertical-align:middle"><span class="cv-val">${dc.weight.toFixed(1)}</span></span>
-        <span class="sw-val" style="min-width:80px">容差: <input type="range" class="center-slider" min="0.05" max="1" step="0.05" value="${dc.tolerance}" data-dim="${dc.dimension}" data-field="tolerance" style="width:50px;vertical-align:middle"><span class="cv-val">${dc.tolerance.toFixed(2)}</span></span>
-        <button class="btn-remove-cv" data-dim="${dc.dimension}" style="font-size:10px;padding:0 4px;cursor:pointer">×</button>
+      html += `<div class="scoring-row" style="flex-wrap:nowrap;gap:6px;align-items:center">
+        <span class="sw-label" style="min-width:68px;flex-shrink:0">${def.label}</span>
+        <span class="sw-val" style="min-width:140px;flex-shrink:0;white-space:nowrap">中心: <input type="range" class="center-slider" min="0" max="1" step="0.01" value="${dc.center}" data-dim="${dc.dimension}" data-field="center" style="width:70px;vertical-align:middle"><span class="cv-val">${dc.center.toFixed(2)}</span></span>
+        <span class="sw-val" style="min-width:120px;flex-shrink:0;white-space:nowrap">权重: <input type="range" class="center-slider" min="0" max="5" step="0.1" value="${dc.weight}" data-dim="${dc.dimension}" data-field="weight" style="width:55px;vertical-align:middle"><span class="cv-val">${dc.weight.toFixed(1)}</span></span>
+        <span class="sw-val" style="min-width:120px;flex-shrink:0;white-space:nowrap">容差: <input type="range" class="center-slider" min="0.05" max="1" step="0.05" value="${dc.tolerance}" data-dim="${dc.dimension}" data-field="tolerance" style="width:55px;vertical-align:middle"><span class="cv-val">${dc.tolerance.toFixed(2)}</span></span>
+        <button class="btn-remove-cv" data-dim="${dc.dimension}" style="font-size:10px;padding:0 4px;cursor:pointer;flex-shrink:0">×</button>
       </div>`;
     });
   } else {
@@ -1224,10 +1252,18 @@ function openDetail(img, src) {
   if (finalScore) parts.push(`<span>匹配度: ${typeof finalScore === 'number' ? finalScore.toFixed(3) : finalScore}</span>`);
   if (img.mood) parts.push(`<span>${img.mood}</span>`);
   if (img.style) parts.push(`<span>${img.style}</span>`);
-  if (img.analysis && img.analysis.visual_summary) parts.push(`<span>${img.analysis.visual_summary.substring(0,80)}</span>`);
   document.getElementById('detailMeta').innerHTML = parts.join('');
-  const tags = img.tags || (img.analysis ? img.analysis.style_tags : []) || [];
-  document.getElementById('detailTags').innerHTML = tags.map(t=>`<span>${t}</span>`).join('');
+
+  // Collect tags from multiple sources
+  const allTags = new Set();
+  (img.tags || []).forEach(t => allTags.add(t));
+  if (img.analysis) {
+    (img.analysis.style_tags || []).forEach(t => allTags.add(t));
+    if (img.analysis.color_palette) img.analysis.color_palette.forEach(t => allTags.add(t));
+    if (img.analysis.mood_tags) img.analysis.mood_tags.forEach(t => allTags.add(t));
+  }
+  document.getElementById('detailTags').innerHTML = [...allTags].map(t=>`<span>${t}</span>`).join('');
+
   const md = document.getElementById('detail-metrics'); md.innerHTML = '';
 
   // ── Module 1: Pixel Metrics (视觉指标) ──
@@ -1237,9 +1273,9 @@ function openDetail(img, src) {
     .filter(([k,v]) => v != null && v !== 0.5)
     .sort((a,b) => Math.abs(b[1]-0.5) - Math.abs(a[1]-0.5));
   if (pxEntries.length) {
-    md.innerHTML += `<div class="detail-section-header" style="font-size:12px;font-weight:600;color:#4a9eff;margin:10px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(74,158,255,0.3)">视觉指标 / Pixel Metrics</div>`;
+    md.innerHTML += `<div class="detail-section-header" style="font-size:13px;font-weight:700;color:#4a9eff;margin:12px 0 8px;padding-bottom:6px;border-bottom:1px solid rgba(74,158,255,0.3);display:block;width:100%;text-align:left">视觉指标 / Pixel Metrics</div>`;
     pxEntries.forEach(([k,v,def]) => {
-      md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${def.axis}">${def.label}</span><div class="bar-track" style="background:rgba(74,158,255,0.1)"><div class="bar-fill" style="width:${Math.round(v*100)}%;background:linear-gradient(90deg,#3a7bd5,#4a9eff)"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
+      md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${def.axis}" style="min-width:72px">${def.label}</span><div class="bar-track" style="background:rgba(74,158,255,0.1)"><div class="bar-fill" style="width:${Math.round(v*100)}%;background:linear-gradient(90deg,#3a7bd5,#4a9eff)"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
     });
   }
 
@@ -1251,23 +1287,21 @@ function openDetail(img, src) {
 
   const pdEntries = Object.entries(PERCEPTUAL_DIM_DEFS)
     .map(([k,def]) => [k, pd[k], def])
-    .filter(([k,v]) => v != null && (v !== 0.5 || cvMap[k]));  // Show if has value or has center
+    .filter(([k,v]) => v != null && (v !== 0.5 || cvMap[k]));
     if (pdEntries.length) {
-    md.innerHTML += `<div class="detail-section-header" style="font-size:12px;font-weight:600;color:#e8a04c;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(232,160,76,0.3)">感知维度 / Perceptual Dimensions</div>`;
+    md.innerHTML += `<div class="detail-section-header" style="font-size:13px;font-weight:700;color:#e8a04c;margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid rgba(232,160,76,0.3);display:block;width:100%;text-align:left">感知维度 / Perceptual Dimensions</div>`;
     pdEntries.forEach(([k,v,def]) => {
       const dc = cvMap[k];
       let extras = '';
       if (dc) {
-        // Show center value indicator on the bar
         const centerPos = Math.round(dc.center * 100);
         const tolLeft = Math.round(Math.max(0, dc.center - dc.tolerance) * 100);
         const tolRight = Math.round(Math.min(100, dc.center + dc.tolerance) * 100);
         const inRange = v >= (dc.center - dc.tolerance) && v <= (dc.center + dc.tolerance);
         const dotColor = inRange ? '#4caf50' : '#e94560';
-        extras = `<span class="bar-val" style="font-size:9px;color:#888">中心${dc.center.toFixed(2)}</span>`;
-        // Custom bar with center marker
+        extras = `<span class="bar-val" style="font-size:9px;color:#888;min-width:52px">中心${dc.center.toFixed(2)}</span>`;
         md.innerHTML += `<div class="metric-bar">
-          <span class="bar-label" title="${def.axis}">${def.label}</span>
+          <span class="bar-label" title="${def.axis}" style="min-width:72px">${def.label}</span>
           <div class="bar-track" style="background:rgba(232,160,76,0.08);position:relative">
             <div style="position:absolute;left:${tolLeft}%;width:${tolRight-tolLeft}%;top:0;bottom:0;background:rgba(232,160,76,0.12);border-radius:2px"></div>
             <div style="position:absolute;left:${centerPos}%;top:0;bottom:0;width:2px;background:rgba(232,160,76,0.5)"></div>
@@ -1278,7 +1312,7 @@ function openDetail(img, src) {
           <span class="bar-val">${v.toFixed(2)}</span>
         </div>`;
       } else {
-        md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${def.axis}">${def.label}</span><div class="bar-track" style="background:rgba(232,160,76,0.08)"><div class="bar-fill" style="width:${Math.round(v*100)}%;background:linear-gradient(90deg,#c88a30,#e8a04c)"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
+        md.innerHTML += `<div class="metric-bar"><span class="bar-label" title="${def.axis}" style="min-width:72px">${def.label}</span><div class="bar-track" style="background:rgba(232,160,76,0.08)"><div class="bar-fill" style="width:${Math.round(v*100)}%;background:linear-gradient(90deg,#c88a30,#e8a04c)"></div></div><span class="bar-val">${v.toFixed(2)}</span></div>`;
       }
     });
   }
