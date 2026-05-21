@@ -68,11 +68,11 @@ STATUS_RULES = {
 
 # Status determination thresholds (v5 — dimension-distance scoring)
 STATUS_RULES_V2 = {
-    "core": {"min_score": 0.85, "min_relevance": 0.75},
-    "curated": {"min_score": 0.70},
-    "supplement": {"min_score": 0.55},
-    "outlier": {"max_dimension_match": 0.40, "min_relevance": 0.65},
-    "rejected": {"min_relevance": 0.40},
+    "core": {"min_score": 0.70, "min_relevance": 0.70},
+    "curated": {"min_score": 0.55},
+    "supplement": {"min_score": 0.38},
+    "outlier": {"max_dimension_match": 0.25, "min_relevance": 0.60},
+    "rejected": {"min_relevance": 0.30},
     "duplicate": {"min_duplicate_penalty": 0.80},
 }
 

@@ -105,11 +105,32 @@ def _parse_json_response(content: str) -> dict:
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        # Try to find JSON object in the response
-        match = re.search(r"\{[\s\S]*\}", cleaned)
-        if match:
-            return json.loads(match.group())
-        return {}
+        pass
+
+    # Try to find JSON object in the response
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if match:
+        text = match.group()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Try progressive truncation — remove last item until valid
+        for _ in range(20):
+            # Remove last element after last comma
+            last_brace = text.rfind("}")
+            if last_brace < 0:
+                break
+            text = text[:last_brace].rstrip()
+            # Remove trailing comma
+            text = text.rstrip(",").rstrip()
+            # Close the array and object
+            candidate = text + "}]}"
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -175,10 +196,10 @@ def derive_center_values(
         json={
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "temperature": 0.3,
         },
-        timeout=120.0,
+        timeout=180.0,
     )
     resp.raise_for_status()
 
