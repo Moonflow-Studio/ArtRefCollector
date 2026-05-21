@@ -265,7 +265,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   <button id="importBtn">+ Import Folder</button>
   <button id="loadBoardBtn">Load Board</button>
   <input type="file" id="importFile" webkitdirectory>
-  <input type="file" id="importBoardFile" accept=".json">
+  <input type="file" id="importBoardFile" webkitdirectory>
   <div id="apiStatus">API: checking...</div>
   <div id="navList"></div>
 </div>
@@ -446,34 +446,44 @@ function rebuildAll(skipFit) {
   render(skipFit);
 }
 
-// ── Board Loading ──
-document.getElementById('loadBoardBtn').addEventListener('click', async () => {
-  if (apiAvailable) {
-    try {
-      const r = await fetch(API_BASE + '/api/boards');
-      const boards = await r.json();
-      if (!boards.length) { alert('No boards found. Run parse/plan/pipeline first.'); return; }
-      showBoardModal(boards);
-    } catch(e) { alert('Failed to fetch boards: ' + e); }
-  } else {
-    document.getElementById('importBoardFile').click();
-  }
+// ── Board Loading (folder-based, no server required for viewing) ──
+document.getElementById('loadBoardBtn').addEventListener('click', () => {
+  document.getElementById('importBoardFile').click();
 });
 
 document.getElementById('importBoardFile').addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (!file) return;
+  const files = Array.from(e.target.files);
+  importBoardFolder(files);
+  e.target.value = '';
+});
+
+function importBoardFolder(files) {
+  const configFile = files.find(f => f.name === '_board.json');
+  if (!configFile) { alert('No _board.json found in selected folder.\nPlease select the board folder (e.g. data/boards/S3_屏蔽室/).'); return; }
+
+  // Get directory prefix from the config file's path
+  const dirPrefix = configFile.webkitRelativePath.replace('/_board.json', '');
+
+  // Build file map: relative path → blob URL
+  const fileMap = {};
+  files.forEach(f => {
+    const relPath = f.webkitRelativePath.replace(dirPrefix + '/', '');
+    if (/\.(jpg|jpeg|png|webp|gif)$/i.test(f.name)) {
+      fileMap[relPath] = URL.createObjectURL(f);
+    }
+  });
+
   const reader = new FileReader();
   reader.onload = ev => {
     try {
       const data = JSON.parse(ev.target.result);
-      loadBoardData(data, null);
+      loadBoardData(data, data.id, fileMap);
     } catch(err) { alert('Invalid board JSON: ' + err.message); }
   };
-  reader.readAsText(file);
-  e.target.value = '';
-});
+  reader.readAsText(configFile);
+}
 
+// API modal kept as secondary option (e.g. quick-load when server is running)
 function showBoardModal(boards) {
   const modal = document.getElementById('boardModal');
   const list = document.getElementById('boardList');
@@ -487,7 +497,7 @@ function showBoardModal(boards) {
       try {
         const r = await fetch(API_BASE + '/api/boards/' + encodeURIComponent(b.id));
         const data = await r.json();
-        loadBoardData(data, b.id);
+        loadBoardData(data, b.id, null);
       } catch(e) { alert('Failed to load board: ' + e); }
     });
     list.appendChild(opt);
@@ -499,21 +509,33 @@ document.getElementById('boardModalClose').addEventListener('click', () => {
   document.getElementById('boardModal').classList.remove('active');
 });
 
-function loadBoardData(data, boardId) {
+function loadBoardData(data, boardId, fileMap) {
   const resolvedBoardId = boardId || data.id;
 
-  // Build image resolver — try API URLs first, then construct from board ID
+  // Build image resolver — blob URLs first (offline), then API fallback
   const resolver = (img) => {
-    // 1. Use pre-built API URL from server response
+    // 1. Try blob URL from file map (works offline)
+    if (fileMap) {
+      const lp = (img.local_path || '').replace(/\\/g, '/');
+      if (fileMap[lp]) return fileMap[lp];
+      const tp = (img.thumb_path || '').replace(/\\/g, '/');
+      if (fileMap[tp]) return fileMap[tp];
+      // Try matching by filename
+      const fname = lp.split('/').pop();
+      if (fname) {
+        for (const key of Object.keys(fileMap)) {
+          if (key.endsWith('/' + fname) || key === fname) return fileMap[key];
+        }
+      }
+    }
+    // 2. Try API URL (needs running server)
     if (img.api_url) return API_BASE + encodeURI(img.api_url);
     if (img.api_thumb_url) return API_BASE + encodeURI(img.api_thumb_url);
-    // 2. Construct API URL from board ID + filename (works for file-import when server is available)
+    // 3. Construct API URL from board ID + filename
     if (apiAvailable && resolvedBoardId && img.local_path) {
       const fname = img.local_path.replace(/\\/g, '/').split('/').pop();
       if (fname) return API_BASE + '/api/boards/' + encodeURIComponent(resolvedBoardId) + '/image/' + fname;
     }
-    // 3. Relative local path
-    if (img.local_path && !/^[A-Z]:/i.test(img.local_path)) return img.local_path;
     return '';
   };
 
