@@ -639,10 +639,25 @@ function render(skipFit) {
   world.innerHTML = '';
   scatterTitleX = null; scatterTitleY = null;
   if (currentBoard && layoutMode === 'board') { renderBoard(); if (!skipFit) fitAll(); return; }
-  if (collections.length === 0) { applyTransform(); return; }
-  if (layoutMode === 'scatter' && hasMetrics()) renderScatter();
-  else renderGrid();
+  if (allImages.length === 0 && collections.length === 0) { applyTransform(); return; }
+  if (layoutMode === 'scatter' && hasMetrics()) { renderScatter(); }
+  else if (currentBoard) { renderBoardGrid(); }
+  else { renderGrid(); }
   if (!skipFit) fitAll();
+}
+
+// Flat grid view for board images (used when switching to Grid mode with a board loaded)
+function renderBoardGrid() {
+  if (!currentBoard) return;
+  const b = currentBoard;
+  const container = document.createElement('div');
+  container.className = 'board-container';
+  container.style.cssText = 'position:absolute;top:0;left:0;padding:24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;width:2400px;';
+  b.images.forEach(img => {
+    if (img.status === 'duplicate') return;
+    container.appendChild(createBoardCard(img, b));
+  });
+  world.appendChild(container);
 }
 
 function resolveImg(col, path) {
