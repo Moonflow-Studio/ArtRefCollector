@@ -12,6 +12,7 @@ LANCEDB_DIR = DATA_DIR / "lancedb"
 GALLERIES_DIR = DATA_DIR / "galleries"
 BOARDS_DIR = DATA_DIR / "boards"
 DB_PATH = DATA_DIR / "art_ref.db"
+VLM_CONFIG_PATH = DATA_DIR / "vlm_config.json"
 
 DEFAULT_API_BASE = "http://localhost:23333"
 DEFAULT_MODEL = "zhipu:glm-4.6v"

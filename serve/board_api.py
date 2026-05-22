@@ -1,25 +1,66 @@
 """Local HTTP API server for the Canvas Viewer.
 
 Provides REST endpoints for board data access, user ordering,
-and CLI-equivalent operations (derive-centers, analyze, rank, compose).
-The viewer auto-detects this server and uses it for seamless write-back.
-Falls back to JSON export if server is not running.
+CLI-equivalent operations (derive-centers, analyze, rank, compose),
+and serves the canvas.html viewer.
+VLM config is persisted to data/vlm_config.json.
 """
 
 import json
 import sys
 import threading
+import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from config import BOARDS_DIR, DB_PATH, DEFAULT_API_BASE
+from config import BOARDS_DIR, DB_PATH, DEFAULT_API_BASE, VLM_CONFIG_PATH, BASE_DIR
 
-# Module-level config for VLM calls (set via serve --model/--api-key)
+# Module-level config for VLM calls
 _vlm_model = ""
 _vlm_api_key = ""
 _vlm_api_base = DEFAULT_API_BASE
 
+# Static files root (gallery/ directory contains canvas.html)
+_STATIC_DIR = BASE_DIR / "gallery"
+
+
+def load_vlm_config() -> dict:
+    """Load VLM config from file, falling back to defaults."""
+    defaults = {"api_base": DEFAULT_API_BASE, "model": "", "api_key": ""}
+    if VLM_CONFIG_PATH.exists():
+        try:
+            data = json.loads(VLM_CONFIG_PATH.read_text(encoding="utf-8"))
+            return {**defaults, **data}
+        except (json.JSONDecodeError, OSError):
+            pass
+    return defaults
+
+
+def save_vlm_config(model: str = None, api_key: str = None, api_base: str = None):
+    """Save VLM config to file, merging with existing values."""
+    current = load_vlm_config()
+    if model is not None:
+        current["model"] = model
+    if api_key is not None:
+        current["api_key"] = api_key
+    if api_base is not None:
+        current["api_base"] = api_base
+    VLM_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    VLM_CONFIG_PATH.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def apply_vlm_config(cfg: dict):
+    """Apply a config dict to module-level globals."""
+    global _vlm_model, _vlm_api_key, _vlm_api_base
+    _vlm_model = cfg.get("model", "")
+    _vlm_api_key = cfg.get("api_key", "")
+    _vlm_api_base = cfg.get("api_base", DEFAULT_API_BASE)
+
+
+# ---------------------------------------------------------------------------
+# Background workers
+# ---------------------------------------------------------------------------
 
 def _run_derive_centers(board_id):
     """Background: derive center values."""
@@ -33,7 +74,6 @@ def _run_derive_centers(board_id):
     cv = derive_center_values(board.setting_text, _vlm_api_base, _vlm_model, _vlm_api_key)
     board.center_values = cv
     db.save_board(board)
-    # Update _board.json
     if board.base_dir:
         board_json = db.export_board_json(board_id)
         if board_json:
@@ -101,11 +141,14 @@ def _run_compose(board_id):
     return result
 
 
+# ---------------------------------------------------------------------------
+# HTTP Handler
+# ---------------------------------------------------------------------------
+
 class BoardAPIHandler(BaseHTTPRequestHandler):
-    """REST API handler for board operations."""
+    """REST API handler for board operations + static file serving."""
 
     def log_message(self, format, *args):
-        # Quieter logging: only show errors
         if args and args[0].startswith("200"):
             return
         super().log_message(format, *args)
@@ -132,7 +175,7 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
         try:
             self.wfile.write(data)
         except ConnectionError:
-            pass  # Client disconnected, ignore
+            pass
 
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0))
@@ -150,14 +193,11 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
 
     def _run_async(self, board_id, fn):
         """Run a long operation in background, return immediate ack."""
-        result_holder = {"done": False, "data": None}
         def worker():
             try:
-                result_holder["data"] = fn(board_id)
+                fn(board_id)
             except Exception as e:
-                result_holder["data"] = {"error": str(e)}
-            finally:
-                result_holder["done"] = True
+                print(f"[{fn.__name__}] error: {e}", file=sys.stderr)
         t = threading.Thread(target=worker, daemon=True)
         t.start()
         self._send_json({"status": "started", "board_id": board_id, "action": fn.__name__})
@@ -177,11 +217,11 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path.rstrip("/"))
         query = parse_qs(urlparse(self.path).query)
 
+        # ── API endpoints ──
         if path == "/api/health":
             self._send_json({"status": "ok"})
 
         elif path == "/api/vlm-config":
-            # Return current VLM config (mask API key)
             key_display = ""
             if _vlm_api_key:
                 key_display = _vlm_api_key[:8] + "..." + _vlm_api_key[-4:] if len(_vlm_api_key) > 12 else "***"
@@ -200,9 +240,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
 
         elif path.startswith("/api/boards/"):
             parts = path.split("/")
-            # /api/boards/<board_id>
-            # /api/boards/<board_id>/sections
-            # /api/boards/<board_id>/images
             board_id = parts[3] if len(parts) > 3 else ""
 
             if not board_id:
@@ -238,7 +275,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
                     self._send_json({"error": "No composition found"}, 404)
 
             elif sub == "image" and len(parts) > 5:
-                # /api/boards/<id>/image/<filename> — serve image file
                 filename = parts[5]
                 db = self._get_db()
                 board = db.get_board(board_id)
@@ -256,7 +292,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
                 self._send_file(img_path, mime)
 
             elif sub == "thumb" and len(parts) > 5:
-                # /api/boards/<id>/thumb/<filename>
                 filename = parts[5]
                 db = self._get_db()
                 board = db.get_board(board_id)
@@ -268,7 +303,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
                 self._send_file(thumb_path, "image/jpeg")
 
             else:
-                # Return full board data
                 db = self._get_db()
                 board = db.get_board(board_id)
                 db.close()
@@ -276,7 +310,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
                     self._send_json({"error": "Board not found"}, 404)
                     return
                 data = board.model_dump()
-                # Convert image paths to API URLs for the viewer
                 base_url = f"/api/boards/{board_id}"
                 for img in data.get("images", []):
                     lp = img.get("local_path", "")
@@ -290,21 +323,42 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
                 self._send_json(data)
 
         else:
-            self._send_json({"error": f"Unknown endpoint: {path}"}, 404)
+            # ── Static file serving (canvas.html etc.) ──
+            file_path = path.lstrip("/") or "canvas.html"
+            full_path = _STATIC_DIR / file_path
+            if full_path.exists() and full_path.is_file():
+                mime_map = {
+                    ".html": "text/html; charset=utf-8",
+                    ".css": "text/css; charset=utf-8",
+                    ".js": "application/javascript; charset=utf-8",
+                    ".json": "application/json",
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".svg": "image/svg+xml",
+                    ".ico": "image/x-icon",
+                }
+                ct = mime_map.get(full_path.suffix.lower(), "application/octet-stream")
+                self._send_file(full_path, ct)
+            else:
+                self._send_json({"error": f"Not found: {path}"}, 404)
 
     def do_POST(self):
         path = unquote(urlparse(self.path).path.rstrip("/"))
 
         if path == "/api/vlm-config":
-            # Update VLM config at runtime
+            # Update VLM config in memory AND persist to file
             global _vlm_model, _vlm_api_key, _vlm_api_base
             body = self._read_body()
-            if body.get("model") is not None:
-                _vlm_model = body["model"]
-            if body.get("api_key") is not None:
-                _vlm_api_key = body["api_key"]
-            if body.get("api_base") is not None:
-                _vlm_api_base = body["api_base"]
+            model = body.get("model")
+            api_key = body.get("api_key")
+            api_base = body.get("api_base")
+            if model is not None:
+                _vlm_model = model
+            if api_key is not None:
+                _vlm_api_key = api_key
+            if api_base is not None:
+                _vlm_api_base = api_base
+            save_vlm_config(model, api_key, api_base)
             print(f"VLM config updated: model={_vlm_model}, base={_vlm_api_base}", file=sys.stderr)
             self._send_json({"status": "ok", "model": _vlm_model, "api_base": _vlm_api_base})
             return
@@ -322,7 +376,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
             return
 
         if sub == "sections" and len(parts) > 5:
-            # POST /api/boards/<id>/sections/<section_id>/reorder
             section_id = parts[5]
             action = parts[6] if len(parts) > 6 else ""
             if action == "reorder":
@@ -344,7 +397,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
                     db.close()
                     self._send_json({"error": f"Section {section_id} not found"}, 404)
                     return
-                # Update _board.json
                 board = db.get_board(board_id)
                 if board and board.base_dir:
                     board_json = db.export_board_json(board_id)
@@ -358,7 +410,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"Unknown action: {action}"}, 400)
 
         elif sub == "refresh":
-            # POST /api/boards/<id>/refresh — regenerate _board.json
             db = self._get_db()
             board_json = db.export_board_json(board_id)
             if not board_json:
@@ -372,7 +423,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
                 )
                 comp_path = Path(board.base_dir) / "board_composition.json"
                 if comp_path.exists():
-                    # Also refresh composition file
                     sections = db.get_sections(board_id)
                     board.sections = sections
                     comp_path.write_text(
@@ -383,7 +433,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "ok"})
 
         elif sub == "export-order":
-            # POST /api/boards/<id>/export-order — return user_order JSON for download
             db = self._get_db()
             sections = db.get_sections(board_id)
             db.close()
@@ -391,7 +440,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
             self._send_json({"board_id": board_id, "sections": orders})
 
         elif sub == "update-centers":
-            # POST /api/boards/<id>/update-centers — save center values from UI
             body = self._read_body()
             db = self._get_db()
             board = db.get_board(board_id)
@@ -406,7 +454,6 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "ok", "centers": len(board.center_values.centers)})
 
         elif sub == "recompute-scores":
-            # POST /api/boards/<id>/recompute-scores — recompute all scores with current centers
             from analyze.board_ranker import compute_dimension_distance_score, assign_status_v2
             db = self._get_db()
             board = db.get_board(board_id)
@@ -429,58 +476,44 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "ok", "images_updated": len(images)})
 
         elif sub == "derive-centers":
-            # POST /api/boards/<id>/derive-centers — derive center values (background)
             self._run_async(board_id, _run_derive_centers)
 
         elif sub == "feedback-centers":
-            # POST /api/boards/<id>/feedback-centers — derive from user feedback (background)
             self._run_async(board_id, _run_feedback_centers)
 
         elif sub == "analyze":
-            # POST /api/boards/<id>/analyze — analyze all images (background)
             self._run_async(board_id, _run_analyze)
 
         elif sub == "rank":
-            # POST /api/boards/<id>/rank — rank and assign statuses (background)
             self._run_async(board_id, _run_rank)
 
         elif sub == "compose":
-            # POST /api/boards/<id>/compose — compose into sections (background)
             self._run_async(board_id, _run_compose)
 
         else:
             self._send_json({"error": f"Unknown endpoint: POST {path}"}, 404)
 
 
-def start_server(port: int = 8765, model: str = "", api_key: str = "", api_base: str = ""):
-    global _vlm_model, _vlm_api_key, _vlm_api_base
-    _vlm_model = model
-    _vlm_api_key = api_key
-    if api_base:
-        _vlm_api_base = api_base
+# ---------------------------------------------------------------------------
+# Server entry point
+# ---------------------------------------------------------------------------
+
+def start_server(port: int = 8765, open_browser: bool = True):
+    """Start the API server. Loads VLM config from file."""
+    cfg = load_vlm_config()
+    apply_vlm_config(cfg)
+
     server = HTTPServer(("127.0.0.1", port), BoardAPIHandler)
-    print(f"Board API server running at http://localhost:{port}", file=sys.stderr)
+    url = f"http://localhost:{port}"
+    print(f"Art Ref Canvas running at {url}", file=sys.stderr)
     if _vlm_model:
         print(f"VLM model: {_vlm_model}", file=sys.stderr)
-    print(f"Endpoints:", file=sys.stderr)
-    print(f"  GET  /api/health", file=sys.stderr)
-    print(f"  GET  /api/vlm-config", file=sys.stderr)
-    print(f"  POST /api/vlm-config", file=sys.stderr)
-    print(f"  GET  /api/boards", file=sys.stderr)
-    print(f"  GET  /api/boards/<id>", file=sys.stderr)
-    print(f"  GET  /api/boards/<id>/sections", file=sys.stderr)
-    print(f"  GET  /api/boards/<id>/images", file=sys.stderr)
-    print(f"  GET  /api/boards/<id>/composition", file=sys.stderr)
-    print(f"  GET  /api/boards/<id>/image/<filename>", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/sections/<sid>/reorder", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/refresh", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/update-centers", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/recompute-scores", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/derive-centers  [async]", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/feedback-centers  [async]", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/analyze  [async]", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/rank  [async]", file=sys.stderr)
-    print(f"  POST /api/boards/<id>/compose  [async]", file=sys.stderr)
+    else:
+        print(f"VLM not configured — set via {VLM_CONFIG_PATH} or the web UI", file=sys.stderr)
+
+    if open_browser:
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:

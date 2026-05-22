@@ -340,7 +340,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
       <button class="btn-save" id="vlmSaveBtn">保存</button>
       <button id="vlmCancelBtn">取消</button>
     </div>
-    <div class="vlm-hint">配置 VLM 模型用于图片分析和设定解析。无需 API server 也可直接使用。</div>
+    <div class="vlm-hint">配置保存到 data/vlm_config.json，所有 API 操作共享此配置。</div>
   </div>
   <div id="navList"></div>
 </div>
@@ -390,7 +390,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 <script>
 const COLLECTION_CONFIG = '_collection.json';
 const COL_SPACING = 200;
-const API_BASE = 'http://localhost:8765';
+// When served from API server, use '' (relative). When opened as file://, fallback to localhost.
+const API_BASE = (location.protocol === 'file:') ? 'http://localhost:8765' : '';
 
 const PIXEL_METRIC_DEFS = {
   brightness:        { label: '亮度',       axis: '暗 → 亮',           group: 'pixel' },
@@ -464,11 +465,8 @@ const WEIGHT_LABELS = {
 let scoringWeights = JSON.parse(localStorage.getItem('scoringWeights')) || {...DEFAULT_WEIGHTS};
 let scoringVisible = false;
 
-// VLM config (localStorage backed, synced to API server)
-let vlmConfig = JSON.parse(localStorage.getItem('vlmConfig') || '{}');
-if (!vlmConfig.api_base) vlmConfig.api_base = '';
-if (!vlmConfig.model) vlmConfig.model = '';
-if (!vlmConfig.api_key) vlmConfig.api_key = '';
+// VLM config (synced with server file via API)
+let vlmConfig = { api_base: '', model: '', api_key: '' };
 
 // Center values system (v5)
 let boardCenterValues = { centers: [], source: 'none', derived_at: '' };
@@ -493,17 +491,14 @@ async function checkApi() {
       apiAvailable = true;
       el.childNodes[0].textContent = 'API: connected ';
       el.className = 'connected';
-      // Sync VLM config to server if local config exists
-      if (vlmConfig.api_key || vlmConfig.model || vlmConfig.api_base) {
-        syncVlmToServer();
-      }
       // Load current server config
       try {
         const cr = await fetch(API_BASE + '/api/vlm-config');
         if (cr.ok) {
           const cd = await cr.json();
-          if (!vlmConfig.model && cd.model) vlmConfig.model = cd.model;
-          if (!vlmConfig.api_base && cd.api_base) vlmConfig.api_base = cd.api_base;
+          vlmConfig.api_base = cd.api_base || '';
+          vlmConfig.model = cd.model || '';
+          vlmConfig.api_key_set = cd.api_key_set || false;
         }
       } catch(e) {}
       updateSettingsBtn();
@@ -519,7 +514,7 @@ checkApi();
 
 function updateSettingsBtn() {
   const btn = document.getElementById('settingsBtn');
-  const hasConfig = vlmConfig.api_key && vlmConfig.model;
+  const hasConfig = vlmConfig.model && vlmConfig.api_key_set;
   btn.classList.toggle('configured', !!hasConfig);
   btn.title = hasConfig ? `VLM: ${vlmConfig.model}` : 'VLM 未配置 — 点击设置';
 }
@@ -527,14 +522,10 @@ function updateSettingsBtn() {
 async function syncVlmToServer() {
   if (!apiAvailable) return;
   try {
-    const body = {};
-    if (vlmConfig.model) body.model = vlmConfig.model;
-    if (vlmConfig.api_key) body.api_key = vlmConfig.api_key;
-    if (vlmConfig.api_base) body.api_base = vlmConfig.api_base;
     await fetch(API_BASE + '/api/vlm-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(vlmConfig),
     });
   } catch(e) {}
 }
@@ -547,16 +538,29 @@ document.getElementById('settingsBtn').addEventListener('click', (e) => {
   if (isOpen) {
     document.getElementById('vlmApiBase').value = vlmConfig.api_base || '';
     document.getElementById('vlmModel').value = vlmConfig.model || '';
-    document.getElementById('vlmApiKey').value = vlmConfig.api_key || '';
+    document.getElementById('vlmApiKey').value = '';
   }
 });
 
-document.getElementById('vlmSaveBtn').addEventListener('click', () => {
+document.getElementById('vlmSaveBtn').addEventListener('click', async () => {
   vlmConfig.api_base = document.getElementById('vlmApiBase').value.trim();
   vlmConfig.model = document.getElementById('vlmModel').value.trim();
-  vlmConfig.api_key = document.getElementById('vlmApiKey').value.trim();
-  localStorage.setItem('vlmConfig', JSON.stringify(vlmConfig));
-  syncVlmToServer();
+  const newKey = document.getElementById('vlmApiKey').value.trim();
+  if (newKey) vlmConfig.api_key = newKey;
+  // Sync to server (persists to vlm_config.json)
+  if (apiAvailable) {
+    await syncVlmToServer();
+    // Reload from server to get authoritative state
+    try {
+      const cr = await fetch(API_BASE + '/api/vlm-config');
+      if (cr.ok) {
+        const cd = await cr.json();
+        vlmConfig.api_base = cd.api_base || '';
+        vlmConfig.model = cd.model || '';
+        vlmConfig.api_key_set = cd.api_key_set || false;
+      }
+    } catch(e) {}
+  }
   updateSettingsBtn();
   document.getElementById('vlmSettingsPanel').classList.remove('open');
 });
@@ -1277,17 +1281,16 @@ function recomputeScores() {
 
 // ── Board API calls ──
 function getVlmConfigured() {
-  return vlmConfig.api_key && vlmConfig.model;
+  return vlmConfig.model && (vlmConfig.api_key_set || vlmConfig.api_key);
 }
 
 function showVlmConfigError(statusEl) {
   const msg = apiAvailable
-    ? '请先在设置中配置 VLM 模型和 API Key（点击 API 状态旁的齿轮按钮）'
-    : 'API server 未运行。两种方式可解决：\n\n1. 启动 API server:\n   python run.py serve\n2. 或点击 API 状态旁的齿轮按钮，配置 OpenAI 兼容 API';
+    ? '请先在设置中配置 VLM 模型和 API Key（点击齿轮按钮）'
+    : '请先运行 python run.py serve 启动服务';
   if (statusEl) statusEl.textContent = 'VLM 未配置';
   alert(msg);
-  // Open settings panel
-  document.getElementById('vlmSettingsPanel').classList.add('open');
+  if (apiAvailable) document.getElementById('vlmSettingsPanel').classList.add('open');
 }
 
 async function callBoardAPI(action, statusText) {
