@@ -75,7 +75,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 .section-header .section-count { font-size: 11px; color: var(--text-dim); }
 .section-summary { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin-bottom: 10px; }
 .section-grid {
-  display: flex; gap: 8px; flex-wrap: wrap;
+  display: flex; gap: 8px; flex-wrap: wrap; min-height: 60px;
+  transition: background 0.15s;
 }
 .section-grid .img-card {
   width: 120px; flex-shrink: 0; cursor: grab;
@@ -941,6 +942,14 @@ function renderBoard() {
         grid.appendChild(card);
       }
     });
+    // Placeholder for empty sections
+    if (orderedImgs.length === 0) {
+      grid.style.cssText += ';border:1px dashed #333;border-radius:8px;padding:12px;display:flex;align-items:center;justify-content:center;';
+      const hint = document.createElement('span');
+      hint.style.cssText = 'font-size:11px;color:#444;pointer-events:none';
+      hint.textContent = '拖拽图片到此处添加';
+      grid.appendChild(hint);
+    }
     block.appendChild(grid);
 
     // Actions
