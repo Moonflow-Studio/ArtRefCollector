@@ -9,33 +9,41 @@
 - **Python >= 3.12**
 - **[uv](https://docs.astral.sh/uv/)** 包管理器
 
-### Cherry Studio（VLM 分析必需）
+### VLM 视觉分析（可选）
 
-视觉分析（图片标注、评选评分、Board 分析）需要通过 Cherry Studio 的 API Server 调用视觉语言模型。
+视觉分析（图片标注、评选评分、Board 分析）需要调用视觉语言模型。支持两种方式：
 
-**安装与配置**：
+**方式 A：使用任意 OpenAI 兼容 API**（推荐）
+
+在 Viewer 网页的齿轮按钮中直接配置 API Base、Model 和 API Key，保存到 `data/vlm_config.json`。支持 OpenAI / Anthropic / Google / 智谱 / DeepSeek 等任意兼容服务。
+
+**方式 B：通过 Cherry Studio 代理**
 
 1. 下载安装 [Cherry Studio](https://cherry-ai.com/)
-2. 在设置中配置至少一个视觉模型的 API 密钥（支持 OpenAI / Anthropic / Google / 智谱等）
+2. 在设置中配置至少一个视觉模型的 API 密钥
 3. 在设置中启用 **API Server**（设置 → API Server → 开启）
 4. 默认监听地址：`http://localhost:23333`
+5. 在 Viewer 齿轮按钮中配置 API Base 为 `http://localhost:23333`，Model 为对应模型（如 `zhipu:glm-4.6v`）
 
-**模型配置**：
-
-默认模型为 `zhipu:glm-4.6v`（智谱 GLM-4.6V）。可通过 `--model` 参数切换：
-
-```bash
-# 使用不同模型
-uv run python run.py analyze-board --board <id> --model openai:gpt-4o
-uv run python run.py analyze-board --board <id> --model anthropic:claude-sonnet-4
-uv run python run.py analyze-board --board <id> --model google:gemini-2.5-pro
-```
-
-模型格式为 `provider:model`，需与 Cherry Studio 中已配置的 provider 和模型名称一致。
-
-**不需要 Cherry Studio 的步骤**：
+**不需要 VLM 的步骤**：
 - 搜索、下载、去重、像素指标计算、存储、画廊生成 — 均可离线运行
 - 画廊查看器查看已有 Board — 完全离线
+
+---
+
+## 快速开始
+
+```bash
+# 启动服务 + 自动打开浏览器
+uv run python run.py serve
+
+# 不自动打开浏览器
+uv run python run.py serve --no-browser
+```
+
+浏览器打开 `http://localhost:8765`，即可使用 Canvas Viewer 的全部功能。
+
+首次使用时点击左下角 API 状态旁的 **齿轮按钮**，配置 VLM 模型和 API Key。
 
 ---
 
@@ -201,27 +209,43 @@ uv run python run.py compose --board <board_id> [--model <provider:model>]
 
 将图片按功能分类组织为分区画板，可选启用 VLM 生成分区摘要。
 
-### 7. 本地 API Server（可选）
+### 7. 通过 Viewer 操作（推荐）
 
-```bash
-uv run python run.py serve --port 8765
-```
+启动服务后，所有 Board 操作均可在网页界面中完成，无需 CLI：
 
-提供 REST API 用于前端写回操作（排序保存等）。查看 Board 不需要启动服务器。
+1. 推导中心值 — 根据设定文本推导感知维度中心值
+2. 分析图片 — VLM 分析所有图片
+3. 评分排序 — 自动去重 + 评分 + 分级
+4. 编排画板 — 按功能分区编排
+
+也可以继续使用 CLI 执行上述步骤。
 
 ---
 
 ## 画廊查看器
 
-### 使用
+### 启动
 
-直接在浏览器中打开 `gallery/canvas.html`（支持 `file://` 协议，无需 HTTP 服务器）。
+```bash
+uv run python run.py serve
+```
+
+浏览器自动打开 `http://localhost:8765`。也可以直接打开 `gallery/canvas.html`（file:// 模式，功能受限）。
+
+### VLM 配置
+
+点击左侧 API 状态旁的 **齿轮按钮**，配置：
+- **API Base URL** — OpenAI 兼容 API 地址（如 `https://api.openai.com/v1`）
+- **Model** — 模型名称（如 `gpt-4o`、`claude-sonnet-4`、`zhipu:glm-4.6v`）
+- **API Key** — API 密钥
+
+配置保存到 `data/vlm_config.json`，CLI 和 Viewer 共享同一配置。
 
 ### 加载 Board
 
 1. 点击左侧 **Load Board**
 2. 选择 Board 文件夹（如 `data/boards/S3_屏蔽室/`）
-3. 所有图片通过本地文件加载，无需服务器
+3. 所有图片通过 API 或本地文件加载
 
 ### 视图模式
 
@@ -237,7 +261,7 @@ uv run python run.py serve --port 8765
 |------|------|
 | Axes | 散点图轴选择（视觉指标 / 感知维度 / 评选分数） |
 | Map | 小地图导航 |
-| Info | Board 信息面板（名称、视觉目标、设定文本、统计） |
+| Info | Board 信息面板（名称、视觉目标、设定文本、统计、Pipeline 操作） |
 | Score | 评分权重调整面板，可实时修改权重并重算分级 |
 
 ### 图片分级
@@ -261,6 +285,8 @@ uv run python run.py serve --port 8765
 | 居中适配 | 工具栏 Fit 按钮 |
 | 切换布局 | Grid / Scatter / Board 按钮 |
 | 小地图 | Map 按钮 |
+| 跨模块拖拽 | 从全图库拖图到分区 |
+| 保存 Board | Save Board 按钮 |
 
 ---
 
@@ -318,9 +344,10 @@ art-ref-collector/
 │   ├── images/<topic>/       # Collection 图片（旧版）
 │   ├── metrics/<session>/    # 每张图片的指标 JSON
 │   ├── sessions/             # 搜索/下载会话数据
+│   ├── vlm_config.json       # VLM 配置（API Base / Model / Key）
 │   └── art_ref.db            # SQLite 元数据库
 ├── gallery/
-│   └── canvas.html           # 画布查看器（支持 file:// 直接打开）
+│   └── canvas.html           # 画布查看器
 ├── run.py                    # CLI 入口
 └── config.py                 # 配置
 ```
