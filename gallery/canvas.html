@@ -84,6 +84,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
 .section-grid .img-card.drag-over {
   box-shadow: 0 0 0 2px var(--accent);
 }
+.section-drop-target {
+  outline: 2px dashed var(--accent) !important;
+  outline-offset: -2px;
+  background: rgba(233,69,96,0.05) !important;
+}
 .section-grid .img-card img { height: 100px; }
 .section-actions {
   display: flex; gap: 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #1a1a1a;
@@ -142,6 +147,14 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   transition: background 0.2s;
 }
 #loadBoardBtn:hover { background: rgba(233,69,96,0.1); }
+#saveBoardBtn {
+  display: none; width: 100%; padding: 8px; margin-bottom: 10px;
+  background: transparent; color: var(--success); border: 1px solid var(--success); border-radius: 8px;
+  cursor: pointer; font-size: 13px; font-weight: 500; text-align: center;
+  transition: background 0.2s;
+}
+#saveBoardBtn:hover { background: rgba(60,184,120,0.1); }
+#saveBoardBtn.dirty { background: rgba(60,184,120,0.15); border-color: var(--warn); color: var(--warn); }
 #nav .nav-item {
   padding: 6px 10px; border-radius: 8px; cursor: pointer;
   display: flex; align-items: center; gap: 8px; transition: background 0.15s;
@@ -292,6 +305,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-sy
   <h3>Collections <span class="col-count" id="colCount">0</span></h3>
   <button id="importBtn">+ Import Folder</button>
   <button id="loadBoardBtn">Load Board</button>
+  <button id="saveBoardBtn" style="display:none">Save Board</button>
   <input type="file" id="importFile" webkitdirectory>
   <input type="file" id="importBoardFile" webkitdirectory>
   <div id="apiStatus">API: checking...</div>
@@ -389,6 +403,8 @@ let scatterTitleX = null, scatterTitleY = null;
 let apiAvailable = false;
 let currentBoard = null;  // Loaded board data for Board mode
 let pendingOrders = {};   // section_id -> [img_ids] for unsaved reorder
+let pendingRemovals = {}; // section_id -> Set<image_id> for unsaved removals
+let hasUnsavedChanges = false;
 
 const TIER_DEFS = {
   core:       { label: '核心', color: '#e94560', bg: 'rgba(233,69,96,0.25)' },
@@ -576,6 +592,85 @@ document.getElementById('boardModalClose').addEventListener('click', () => {
   document.getElementById('boardModal').classList.remove('active');
 });
 
+// ── Save Board ──
+document.getElementById('saveBoardBtn').addEventListener('click', saveBoard);
+
+function buildBoardExportJson() {
+  const b = currentBoard;
+  const raw = b._rawData || {};
+  const exportData = {
+    id: b.id,
+    name: b.name,
+    setting_text: b.setting_text,
+    visual_goal_summary: b.visual_goal_summary,
+    style_profile: raw.style_profile || {},
+    center_values: boardCenterValues,
+    reference_tracks: raw.reference_tracks || [],
+    images: b.images.map(img => {
+      const r = {...(img._raw || img)};
+      delete r._raw;
+      return r;
+    }),
+    sections: b.sections.map(s => {
+      const order = pendingOrders[s.section_id] || s.user_order || [];
+      return {
+        section_id: s.section_id,
+        section_name: s.section_name,
+        summary: s.summary || '',
+        design_takeaways: s.design_takeaways || [],
+        key_images: (s.key_images || []),
+        supporting_images: (s.supporting_images || []),
+        anti_references: s.anti_references || [],
+        missing_needs: s.missing_needs || [],
+        user_order: order,
+      };
+    }),
+    core_references: b.core_references || [],
+    anti_references: b.anti_references || [],
+    global_missing_needs: raw.global_missing_needs || [],
+    next_search_suggestions: raw.next_search_suggestions || [],
+    created_at: raw.created_at || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  return exportData;
+}
+
+async function saveBoard() {
+  if (!currentBoard) { alert('No board loaded'); return; }
+  const data = buildBoardExportJson();
+  const jsonStr = JSON.stringify(data, null, 2);
+
+  // Try File System Access API
+  if (window.showDirectoryPicker) {
+    try {
+      const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      // Verify it looks like a board folder
+      let hasBoardJson = false;
+      for await (const entry of dirHandle.values()) {
+        if (entry.name === '_board.json') hasBoardJson = true;
+      }
+      const fileHandle = await dirHandle.getFileHandle('_board.json', { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(jsonStr);
+      await writable.close();
+      hasUnsavedChanges = false;
+      document.getElementById('saveBoardBtn').classList.remove('dirty');
+      alert('Board saved to ' + dirHandle.name + '/_board.json');
+      return;
+    } catch(e) {
+      if (e.name === 'AbortError') return;
+      console.warn('File System Access failed:', e);
+    }
+  }
+  // Fallback: download
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = '_board.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function loadBoardData(data, boardId, fileMap) {
   const resolvedBoardId = boardId || data.id;
 
@@ -614,10 +709,12 @@ function loadBoardData(data, boardId, fileMap) {
     core_references: data.core_references || [],
     anti_references: data.anti_references || [],
     sections: data.sections || [],
-    images: data.images || [],
+    images: (data.images || []).map(img => ({...img, _raw: img})),
     resolver: resolver,
+    _rawData: data,
   };
   pendingOrders = {};
+  pendingRemovals = {}; // section_id -> Set of image_ids to remove
 
   // Load center values from board data (v5)
   if (data.center_values && data.center_values.centers) {
@@ -813,6 +910,10 @@ function renderBoard() {
     const grid = document.createElement('div');
     grid.className = 'section-grid';
     grid.dataset.sectionId = section.section_id;
+    // Container-level drop (for adding from outside)
+    grid.addEventListener('dragover', onSectionGridDragOver);
+    grid.addEventListener('dragleave', onSectionGridDragLeave);
+    grid.addEventListener('drop', onSectionGridDrop);
 
     // Use user_order if available, pending order, or default order
     const order = pendingOrders[section.section_id] || section.user_order || null;
@@ -829,6 +930,14 @@ function renderBoard() {
         card.addEventListener('dragover', onDragOver);
         card.addEventListener('dragleave', onDragLeave);
         card.addEventListener('drop', onDrop);
+        // Right-click to remove from section
+        card.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          if (confirm(`从「${section.section_name}」移除此图片？`)) {
+            removeImageFromSection(img.id, section.section_id);
+            renderBoard();
+          }
+        });
         grid.appendChild(card);
       }
     });
@@ -852,35 +961,76 @@ function renderBoard() {
     container.appendChild(block);
   });
 
-  // ── Unassigned images: show images not in any section ──
-  const assignedIds = new Set();
-  b.sections.forEach(s => {
-    [...(s.key_images||[]), ...(s.supporting_images||[])].forEach(r => assignedIds.add(r.image_id));
-  });
-  const unassigned = (b.images || []).filter(img => !assignedIds.has(img.id));
-  if (unassigned.length) {
-    const uaBlock = document.createElement('div');
-    uaBlock.className = 'section-block';
-    uaBlock.style.borderColor = '#333';
-    const uaHeader = document.createElement('div');
-    uaHeader.className = 'section-header';
-    uaHeader.innerHTML = `<h3 style="color:#888">未分类 / Unassigned</h3><span class="section-count">${unassigned.length} images</span>`;
-    uaBlock.appendChild(uaHeader);
-    const uaGrid = document.createElement('div');
-    uaGrid.className = 'section-grid';
-    // Sort by score descending
-    unassigned.sort((a,b) => (b.dimension_distance_score || b.final_score || 0) - (a.dimension_distance_score || a.final_score || 0));
-    unassigned.forEach(img => {
+  // ── Gallery panel: All Images (full-width) ──
+  const { assignedIds, assignedMap } = getAssignedInfo();
+  const allBoardImgs = b.images || [];
+  const classified = allBoardImgs.filter(img => assignedIds.has(img.id));
+  const unclassified = allBoardImgs.filter(img => !assignedIds.has(img.id));
+  // Sort by score
+  const byScore = (a,b) => (b.dimension_distance_score || b.final_score || 0) - (a.dimension_distance_score || a.final_score || 0);
+  classified.sort(byScore);
+  unclassified.sort(byScore);
+
+  const galleryBlock = document.createElement('div');
+  galleryBlock.className = 'section-block';
+  galleryBlock.style.cssText = 'grid-column:1/-1;border-color:#333';
+  const galleryHeader = document.createElement('div');
+  galleryHeader.className = 'section-header';
+  galleryHeader.innerHTML = `<h3 style="color:#bbb">全图库 / All Images</h3><span class="section-count">${allBoardImgs.length} total: ${classified.length} classified, ${unclassified.length} unclassified</span>`;
+  galleryBlock.appendChild(galleryHeader);
+
+  // Classified sub-grid
+  if (classified.length) {
+    const clsLabel = document.createElement('div');
+    clsLabel.style.cssText = 'font-size:11px;color:var(--success);margin:6px 0 4px;font-weight:600';
+    clsLabel.textContent = `已分类 (${classified.length})`;
+    galleryBlock.appendChild(clsLabel);
+    const clsGrid = document.createElement('div');
+    clsGrid.className = 'section-grid';
+    classified.forEach(img => {
       const card = createBoardCard(img, b);
       card.dataset.imageId = img.id;
-      uaGrid.appendChild(card);
+      card.draggable = true;
+      card.addEventListener('dragstart', onDragStart);
+      card.addEventListener('dragend', onDragEnd);
+      // Show section badge
+      const sectionBadge = document.createElement('span');
+      sectionBadge.style.cssText = 'position:absolute;bottom:4px;left:4px;font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(60,184,120,0.3);color:#6fd6a0;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      sectionBadge.textContent = (assignedMap[img.id] || []).join(', ');
+      card.style.position = 'relative';
+      card.appendChild(sectionBadge);
+      clsGrid.appendChild(card);
     });
-    uaBlock.appendChild(uaGrid);
-    container.appendChild(uaBlock);
+    galleryBlock.appendChild(clsGrid);
   }
+
+  // Unclassified sub-grid
+  if (unclassified.length) {
+    const uncLabel = document.createElement('div');
+    uncLabel.style.cssText = 'font-size:11px;color:var(--text-dim);margin:8px 0 4px;font-weight:600';
+    uncLabel.textContent = `未分类 (${unclassified.length}) — 拖拽到上方 section 添加`;
+    galleryBlock.appendChild(uncLabel);
+    const uncGrid = document.createElement('div');
+    uncGrid.className = 'section-grid';
+    uncGrid.style.cssText = 'border:1px dashed #333;border-radius:8px;padding:8px;min-height:60px';
+    unclassified.forEach(img => {
+      const card = createBoardCard(img, b);
+      card.dataset.imageId = img.id;
+      card.draggable = true;
+      card.addEventListener('dragstart', onDragStart);
+      card.addEventListener('dragend', onDragEnd);
+      uncGrid.appendChild(card);
+    });
+    galleryBlock.appendChild(uncGrid);
+  }
+
+  container.appendChild(galleryBlock);
 
   world.appendChild(container);
   updateBoardInfoPanel();
+  // Update save button dirty state
+  const saveBtn = document.getElementById('saveBoardBtn');
+  if (saveBtn) saveBtn.classList.toggle('dirty', hasUnsavedChanges);
 }
 
 function createBoardCard(img, board) {
@@ -1081,19 +1231,55 @@ function orderByList(refs, orderList) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
+// ── Section helpers ──
+function isImageInSection(imageId, sectionId) {
+  const s = (currentBoard?.sections || []).find(s => s.section_id === sectionId);
+  if (!s) return false;
+  const ids = [...(s.key_images||[]), ...(s.supporting_images||[])].map(r => r.image_id);
+  return ids.includes(imageId);
+}
+function addImageToSection(imageId, sectionId) {
+  const s = (currentBoard?.sections || []).find(s => s.section_id === sectionId);
+  if (!s) return;
+  if (!s.key_images) s.key_images = [];
+  s.key_images.push({ image_id: imageId, reason: '' });
+  hasUnsavedChanges = true;
+}
+function removeImageFromSection(imageId, sectionId) {
+  const s = (currentBoard?.sections || []).find(s => s.section_id === sectionId);
+  if (!s) return;
+  s.key_images = (s.key_images || []).filter(r => r.image_id !== imageId);
+  s.supporting_images = (s.supporting_images || []).filter(r => r.image_id !== imageId);
+  if (s.user_order) s.user_order = s.user_order.filter(id => id !== imageId);
+  if (pendingOrders[sectionId]) pendingOrders[sectionId] = pendingOrders[sectionId].filter(id => id !== imageId);
+  hasUnsavedChanges = true;
+}
+function getAssignedInfo() {
+  const assignedIds = new Set();
+  const assignedMap = {}; // image_id -> [section_names]
+  (currentBoard?.sections || []).forEach(s => {
+    [...(s.key_images||[]), ...(s.supporting_images||[])].forEach(r => {
+      assignedIds.add(r.image_id);
+      if (!assignedMap[r.image_id]) assignedMap[r.image_id] = [];
+      assignedMap[r.image_id].push(s.section_name || s.section_id);
+    });
+  });
+  return { assignedIds, assignedMap };
+}
+
 // ── Drag & Drop ──
 let dragSrcId = null;
 
 function onDragStart(e) {
   dragSrcId = e.currentTarget.dataset.imageId;
   e.currentTarget.classList.add('dragging');
-  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.effectAllowed = 'copy';
   e.dataTransfer.setData('text/plain', dragSrcId);
 }
 
 function onDragEnd(e) {
   e.currentTarget.classList.remove('dragging');
-  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+  document.querySelectorAll('.drag-over,.section-drop-target').forEach(el => { el.classList.remove('drag-over'); el.classList.remove('section-drop-target'); });
   dragSrcId = null;
 }
 
@@ -1112,26 +1298,52 @@ function onDragLeave(e) {
 
 function onDrop(e) {
   e.preventDefault();
-  const targetId = e.currentTarget.dataset.imageId;
-  const sectionId = e.currentTarget.closest('.section-grid').dataset.sectionId;
   e.currentTarget.classList.remove('drag-over');
+  const targetId = e.currentTarget.dataset.imageId;
+  const sectionGrid = e.currentTarget.closest('.section-grid');
+  if (!sectionGrid || !dragSrcId || dragSrcId === targetId) return;
+  const sectionId = sectionGrid.dataset.sectionId;
 
-  if (!dragSrcId || dragSrcId === targetId) return;
-
-  // Get current order from the grid
-  const grid = e.currentTarget.closest('.section-grid');
-  const cards = [...grid.querySelectorAll('.img-card')];
-  let ids = cards.map(c => c.dataset.imageId);
-
-  // Move dragSrcId to targetId's position
-  const fromIdx = ids.indexOf(dragSrcId);
-  const toIdx = ids.indexOf(targetId);
-  if (fromIdx === -1 || toIdx === -1) return;
-  ids.splice(fromIdx, 1);
-  ids.splice(toIdx, 0, dragSrcId);
-
-  pendingOrders[sectionId] = ids;
+  if (isImageInSection(dragSrcId, sectionId)) {
+    // Same section reorder
+    const cards = [...sectionGrid.querySelectorAll('.img-card')];
+    let ids = cards.map(c => c.dataset.imageId);
+    const fromIdx = ids.indexOf(dragSrcId);
+    const toIdx = ids.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    ids.splice(fromIdx, 1);
+    ids.splice(toIdx, 0, dragSrcId);
+    pendingOrders[sectionId] = ids;
+  } else {
+    // Cross-section add
+    addImageToSection(dragSrcId, sectionId);
+  }
   renderBoard();
+}
+
+// Drop on section-grid container (empty area)
+function onSectionGridDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  e.currentTarget.classList.add('section-drop-target');
+}
+function onSectionGridDragLeave(e) {
+  // Only remove if truly leaving the grid
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    e.currentTarget.classList.remove('section-drop-target');
+  }
+}
+function onSectionGridDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('section-drop-target');
+  // Ignore if drop was handled by a child card
+  if (e.target.closest('.img-card')) return;
+  if (!dragSrcId) return;
+  const sectionId = e.currentTarget.dataset.sectionId;
+  if (!isImageInSection(dragSrcId, sectionId)) {
+    addImageToSection(dragSrcId, sectionId);
+    renderBoard();
+  }
 }
 
 // ── Apply / Reset Order ──
@@ -1425,6 +1637,7 @@ function updateModeButtons() {
   document.getElementById('btnBoard').classList.toggle('active', layoutMode==='board');
   document.getElementById('btnBoardInfo').style.display = currentBoard ? '' : 'none';
   document.getElementById('btnScoring').style.display = currentBoard ? '' : 'none';
+  document.getElementById('saveBoardBtn').style.display = currentBoard ? '' : 'none';
 }
 document.getElementById('btnGrid').addEventListener('click', () => { layoutMode='grid'; updateModeButtons(); render(); });
 document.getElementById('btnScatter').addEventListener('click', () => {
