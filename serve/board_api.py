@@ -180,6 +180,18 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
         if path == "/api/health":
             self._send_json({"status": "ok"})
 
+        elif path == "/api/vlm-config":
+            # Return current VLM config (mask API key)
+            key_display = ""
+            if _vlm_api_key:
+                key_display = _vlm_api_key[:8] + "..." + _vlm_api_key[-4:] if len(_vlm_api_key) > 12 else "***"
+            self._send_json({
+                "model": _vlm_model,
+                "api_base": _vlm_api_base,
+                "api_key_set": bool(_vlm_api_key),
+                "api_key_display": key_display,
+            })
+
         elif path == "/api/boards":
             db = self._get_db()
             boards = db.list_boards()
@@ -282,6 +294,20 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = unquote(urlparse(self.path).path.rstrip("/"))
+
+        if path == "/api/vlm-config":
+            # Update VLM config at runtime
+            global _vlm_model, _vlm_api_key, _vlm_api_base
+            body = self._read_body()
+            if body.get("model") is not None:
+                _vlm_model = body["model"]
+            if body.get("api_key") is not None:
+                _vlm_api_key = body["api_key"]
+            if body.get("api_base") is not None:
+                _vlm_api_base = body["api_base"]
+            print(f"VLM config updated: model={_vlm_model}, base={_vlm_api_base}", file=sys.stderr)
+            self._send_json({"status": "ok", "model": _vlm_model, "api_base": _vlm_api_base})
+            return
 
         if not path.startswith("/api/boards/"):
             self._send_json({"error": "Unknown endpoint"}, 404)
@@ -438,6 +464,8 @@ def start_server(port: int = 8765, model: str = "", api_key: str = "", api_base:
         print(f"VLM model: {_vlm_model}", file=sys.stderr)
     print(f"Endpoints:", file=sys.stderr)
     print(f"  GET  /api/health", file=sys.stderr)
+    print(f"  GET  /api/vlm-config", file=sys.stderr)
+    print(f"  POST /api/vlm-config", file=sys.stderr)
     print(f"  GET  /api/boards", file=sys.stderr)
     print(f"  GET  /api/boards/<id>", file=sys.stderr)
     print(f"  GET  /api/boards/<id>/sections", file=sys.stderr)
