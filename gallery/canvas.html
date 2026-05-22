@@ -1072,7 +1072,17 @@ function updateBoardInfoPanel() {
     `<div class="info-name">${esc(b.name)}</div>` +
     (b.visual_goal_summary ? `<div class="info-goal">${esc(b.visual_goal_summary)}</div>` : '') +
     `<div class="info-stats">${imgCount} images / ${sectionsWithImgs} active sections (${sectionCount} total)</div>` +
-    (b.setting_text ? `<div class="info-setting-toggle" id="toggleSetting">Show setting text</div><div class="info-setting" id="settingText" style="display:none">${esc(b.setting_text)}</div>` : '');
+    (b.setting_text ? `<div class="info-setting-toggle" id="toggleSetting">Show setting text</div><div class="info-setting" id="settingText" style="display:none">${esc(b.setting_text)}</div>` : '') +
+    `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+      <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Pipeline Actions</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <button class="api-action-btn" data-action="derive-centers" style="width:100%;padding:5px 8px;font-size:11px;border:1px solid var(--border);background:none;color:var(--text);border-radius:4px;cursor:pointer">1. 推导中心值</button>
+        <button class="api-action-btn" data-action="analyze" style="width:100%;padding:5px 8px;font-size:11px;border:1px solid var(--border);background:none;color:var(--text);border-radius:4px;cursor:pointer">2. 分析图片</button>
+        <button class="api-action-btn" data-action="rank" style="width:100%;padding:5px 8px;font-size:11px;border:1px solid var(--border);background:none;color:var(--text);border-radius:4px;cursor:pointer">3. 评分排序</button>
+        <button class="api-action-btn" data-action="compose" style="width:100%;padding:5px 8px;font-size:11px;border:1px solid var(--border);background:none;color:var(--text);border-radius:4px;cursor:pointer">4. 编排画板</button>
+      </div>
+      <div id="apiActionStatus" style="font-size:10px;color:var(--text-dim);margin-top:4px"></div>
+    </div>`;
   const toggle = document.getElementById('toggleSetting');
   const settingDiv = document.getElementById('settingText');
   if (toggle && settingDiv) {
@@ -1082,6 +1092,15 @@ function updateBoardInfoPanel() {
       toggle.textContent = vis ? 'Show setting text' : 'Hide setting text';
     });
   }
+  // Wire pipeline action buttons
+  content.querySelectorAll('.api-action-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      const statusEl = document.getElementById('apiActionStatus');
+      if (statusEl) statusEl.textContent = '';
+      callBoardAPIPipeline(action, btn, statusEl);
+    });
+  });
 }
 
 // ── Scoring Engine (v5: dimension-distance) ──
@@ -1149,6 +1168,77 @@ function recomputeScores() {
   localStorage.setItem('boardCenterValues_' + currentBoard.id, JSON.stringify(boardCenterValues));
 }
 
+// ── Board API calls ──
+async function callBoardAPI(action, statusText) {
+  if (!apiAvailable || !currentBoard) {
+    alert('API server 不可用，请先运行:\npython run.py serve --api-key <key> --model <model>');
+    return;
+  }
+  if (!confirm(`${statusText}\n\n这将调用 API server 执行 ${action}，可能需要较长时间。继续？`)) return;
+  const url = `${API_BASE}/api/boards/${encodeURIComponent(currentBoard.id)}/${action}`;
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const data = await r.json();
+    if (data.error) { alert('错误: ' + data.error); return; }
+    if (data.status === 'started') {
+      alert(`${statusText} 已在后台启动。\n操作完成后请点击 Load Board 刷新数据。`);
+      return;
+    }
+    alert(`${action} 完成: ${JSON.stringify(data)}`);
+  } catch(e) {
+    alert('API 调用失败: ' + e.message);
+  }
+}
+
+async function callBoardAPIPipeline(action, btn, statusEl) {
+  if (!apiAvailable || !currentBoard) {
+    if (statusEl) statusEl.textContent = 'API 不可用';
+    alert('API server 不可用，请先运行:\npython run.py serve --api-key <key> --model <model>');
+    return;
+  }
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  if (statusEl) statusEl.textContent = `${action} 执行中...`;
+  const url = `${API_BASE}/api/boards/${encodeURIComponent(currentBoard.id)}/${action}`;
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const data = await r.json();
+    if (data.error) {
+      if (statusEl) statusEl.textContent = `错误: ${data.error}`;
+    } else if (data.status === 'started') {
+      if (statusEl) statusEl.textContent = `${action} 已在后台启动，请稍后刷新`;
+      // Poll for completion
+      let tries = 0;
+      const pollId = setInterval(async () => {
+        tries++;
+        if (tries > 120) { clearInterval(pollId); if (statusEl) statusEl.textContent = '超时，请手动刷新'; return; }
+        try {
+          const hr = await fetch(`${API_BASE}/api/boards/${encodeURIComponent(currentBoard.id)}`);
+          if (hr.ok) {
+            // Server responded — likely done. Reload board.
+            clearInterval(pollId);
+            if (statusEl) statusEl.textContent = `${action} 完成，正在刷新...`;
+            const bd = await hr.json();
+            loadBoardData(bd, currentBoard.id, null);
+          }
+        } catch(e) { /* server busy, keep polling */ }
+      }, 3000);
+    } else {
+      if (statusEl) statusEl.textContent = `${action} 完成 ✓`;
+      // Refresh board data for sync responses
+      try {
+        const hr = await fetch(`${API_BASE}/api/boards/${encodeURIComponent(currentBoard.id)}`);
+        if (hr.ok) { const bd = await hr.json(); loadBoardData(bd, currentBoard.id, null); }
+      } catch(e) {}
+    }
+  } catch(e) {
+    if (statusEl) statusEl.textContent = `失败: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
+
 function updateScoringPanel() {
   const content = document.getElementById('scoringPanelContent');
   if (!content) return;
@@ -1199,17 +1289,20 @@ function updateScoringPanel() {
   const autoBtn = content.querySelector('.btn-auto-derive');
   if (autoBtn) autoBtn.addEventListener('click', () => {
     if (!currentBoard || !currentBoard.setting_text) { alert('需要先加载Board并包含设定文本'); return; }
-    alert('请通过 CLI 运行: python run.py derive-centers --board ' + currentBoard.id);
+    callBoardAPI('derive-centers', '正在推导中心值...');
   });
 
   const fbBtn = content.querySelector('.btn-feedback-derive');
   if (fbBtn) fbBtn.addEventListener('click', () => {
     if (!currentBoard) { alert('需要先加载Board'); return; }
-    alert('请通过 CLI 运行: python run.py feedback-centers --board ' + currentBoard.id);
+    callBoardAPI('feedback-centers', '正在从反馈推导...');
   });
 
   const recomputeBtn = content.querySelector('.btn-recompute');
-  if (recomputeBtn) recomputeBtn.addEventListener('click', recomputeScores);
+  if (recomputeBtn) recomputeBtn.addEventListener('click', () => {
+    if (!apiAvailable) { recomputeScores(); return; }
+    callBoardAPI('recompute-scores', '正在重新计算...');
+  });
 }
 
 // Global img error handler — show placeholder on load failure

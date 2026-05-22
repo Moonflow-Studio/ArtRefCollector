@@ -568,7 +568,7 @@ def cmd_serve(args):
     """Start local API server for the Canvas Viewer."""
     ensure_dirs()
     from serve.board_api import start_server
-    start_server(port=args.port)
+    start_server(port=args.port, model=args.model or "", api_key=args.api_key or "", api_base=args.api_base)
 
 
 def cmd_derive_centers(args):
@@ -879,6 +879,9 @@ def main():
     # serve
     p = sub.add_parser("serve")
     p.add_argument("--port", type=int, default=8765, help="Port number (default: 8765)")
+    p.add_argument("--api-base", default="http://localhost:23333")
+    p.add_argument("--api-key", default="")
+    p.add_argument("--model", default="")
 
     # derive-centers
     p = sub.add_parser("derive-centers")

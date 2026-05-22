@@ -1,17 +1,104 @@
 """Local HTTP API server for the Canvas Viewer.
 
-Provides REST endpoints for board data access and user ordering.
+Provides REST endpoints for board data access, user ordering,
+and CLI-equivalent operations (derive-centers, analyze, rank, compose).
 The viewer auto-detects this server and uses it for seamless write-back.
 Falls back to JSON export if server is not running.
 """
 
 import json
 import sys
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from config import BOARDS_DIR, DB_PATH
+from config import BOARDS_DIR, DB_PATH, DEFAULT_API_BASE
+
+# Module-level config for VLM calls (set via serve --model/--api-key)
+_vlm_model = ""
+_vlm_api_key = ""
+_vlm_api_base = DEFAULT_API_BASE
+
+
+def _run_derive_centers(board_id):
+    """Background: derive center values."""
+    from analyze.setting_parser import derive_center_values
+    from store.database import ImageDatabase
+    db = ImageDatabase()
+    board = db.get_board(board_id)
+    if not board or not board.setting_text:
+        db.close()
+        return {"error": "Board not found or no setting text"}
+    cv = derive_center_values(board.setting_text, _vlm_api_base, _vlm_model, _vlm_api_key)
+    board.center_values = cv
+    db.save_board(board)
+    # Update _board.json
+    if board.base_dir:
+        board_json = db.export_board_json(board_id)
+        if board_json:
+            Path(board.base_dir).joinpath("_board.json").write_text(board_json, encoding="utf-8")
+    db.close()
+    return {"status": "ok", "centers_count": len(cv.centers), "source": cv.source}
+
+
+def _run_feedback_centers(board_id):
+    """Background: derive centers from user feedback."""
+    from analyze.setting_parser import derive_centers_from_feedback, merge_center_values
+    from store.database import ImageDatabase
+    db = ImageDatabase()
+    board = db.get_board(board_id)
+    if not board:
+        db.close()
+        return {"error": "Board not found"}
+    sections = db.get_sections(board_id)
+    images = db.get_board_images(board_id)
+    img_map = {img.id: img for img in images}
+    ordered_images = []
+    for s in sections:
+        order = s.user_order or []
+        for rank, img_id in enumerate(order):
+            if img_id in img_map:
+                weight = 1.0 / (1.0 + rank * 0.5)
+                ordered_images.append((img_map[img_id], weight))
+    if not ordered_images:
+        db.close()
+        return {"error": "No user orders found. Reorder images in sections first."}
+    fb_cv = derive_centers_from_feedback(board.setting_text, ordered_images, _vlm_api_base, _vlm_model, _vlm_api_key)
+    old_cv = board.center_values
+    if old_cv and old_cv.centers:
+        merged = merge_center_values(old_cv, fb_cv, feedback_weight=0.6)
+    else:
+        merged = fb_cv
+    board.center_values = merged
+    db.save_board(board)
+    if board.base_dir:
+        board_json = db.export_board_json(board_id)
+        if board_json:
+            Path(board.base_dir).joinpath("_board.json").write_text(board_json, encoding="utf-8")
+    db.close()
+    return {"status": "ok", "centers_count": len(merged.centers), "source": merged.source}
+
+
+def _run_analyze(board_id):
+    """Background: analyze all board images."""
+    from analyze.board_analyzer import analyze_board_images
+    analyzed = analyze_board_images(board_id, _vlm_api_base, _vlm_model, _vlm_api_key, status_filter=None)
+    return {"status": "ok", "analyzed": len(analyzed), "model": _vlm_model}
+
+
+def _run_rank(board_id):
+    """Background: rank and assign statuses."""
+    from analyze.board_ranker import rank_board_images
+    result = rank_board_images(board_id)
+    return result
+
+
+def _run_compose(board_id):
+    """Background: compose board into sections."""
+    from analyze.board_composer import compose_board
+    result = compose_board(board_id, _vlm_api_base, _vlm_model if _vlm_model else "", _vlm_api_key)
+    return result
 
 
 class BoardAPIHandler(BaseHTTPRequestHandler):
@@ -60,6 +147,20 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
     def _get_db(self):
         from store.database import ImageDatabase
         return ImageDatabase()
+
+    def _run_async(self, board_id, fn):
+        """Run a long operation in background, return immediate ack."""
+        result_holder = {"done": False, "data": None}
+        def worker():
+            try:
+                result_holder["data"] = fn(board_id)
+            except Exception as e:
+                result_holder["data"] = {"error": str(e)}
+            finally:
+                result_holder["done"] = True
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        self._send_json({"status": "started", "board_id": board_id, "action": fn.__name__})
 
     # ------------------------------------------------------------------
     # Routing
@@ -301,13 +402,40 @@ class BoardAPIHandler(BaseHTTPRequestHandler):
             db.close()
             self._send_json({"status": "ok", "images_updated": len(images)})
 
+        elif sub == "derive-centers":
+            # POST /api/boards/<id>/derive-centers — derive center values (background)
+            self._run_async(board_id, _run_derive_centers)
+
+        elif sub == "feedback-centers":
+            # POST /api/boards/<id>/feedback-centers — derive from user feedback (background)
+            self._run_async(board_id, _run_feedback_centers)
+
+        elif sub == "analyze":
+            # POST /api/boards/<id>/analyze — analyze all images (background)
+            self._run_async(board_id, _run_analyze)
+
+        elif sub == "rank":
+            # POST /api/boards/<id>/rank — rank and assign statuses (background)
+            self._run_async(board_id, _run_rank)
+
+        elif sub == "compose":
+            # POST /api/boards/<id>/compose — compose into sections (background)
+            self._run_async(board_id, _run_compose)
+
         else:
             self._send_json({"error": f"Unknown endpoint: POST {path}"}, 404)
 
 
-def start_server(port: int = 8765):
+def start_server(port: int = 8765, model: str = "", api_key: str = "", api_base: str = ""):
+    global _vlm_model, _vlm_api_key, _vlm_api_base
+    _vlm_model = model
+    _vlm_api_key = api_key
+    if api_base:
+        _vlm_api_base = api_base
     server = HTTPServer(("127.0.0.1", port), BoardAPIHandler)
     print(f"Board API server running at http://localhost:{port}", file=sys.stderr)
+    if _vlm_model:
+        print(f"VLM model: {_vlm_model}", file=sys.stderr)
     print(f"Endpoints:", file=sys.stderr)
     print(f"  GET  /api/health", file=sys.stderr)
     print(f"  GET  /api/boards", file=sys.stderr)
@@ -318,6 +446,13 @@ def start_server(port: int = 8765):
     print(f"  GET  /api/boards/<id>/image/<filename>", file=sys.stderr)
     print(f"  POST /api/boards/<id>/sections/<sid>/reorder", file=sys.stderr)
     print(f"  POST /api/boards/<id>/refresh", file=sys.stderr)
+    print(f"  POST /api/boards/<id>/update-centers", file=sys.stderr)
+    print(f"  POST /api/boards/<id>/recompute-scores", file=sys.stderr)
+    print(f"  POST /api/boards/<id>/derive-centers  [async]", file=sys.stderr)
+    print(f"  POST /api/boards/<id>/feedback-centers  [async]", file=sys.stderr)
+    print(f"  POST /api/boards/<id>/analyze  [async]", file=sys.stderr)
+    print(f"  POST /api/boards/<id>/rank  [async]", file=sys.stderr)
+    print(f"  POST /api/boards/<id>/compose  [async]", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
